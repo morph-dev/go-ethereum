@@ -241,7 +241,7 @@ func (b *BlockGen) AddUncle(h *types.Header) {
 
 	// The base fee should be derived from the parent
 	if b.cm.config.IsLondon(h.Number) {
-		h.BaseFee = eip1559.CalcBaseFee(b.cm.config, parent)
+		h.BaseFee = eip1559.CalcBaseFee(b.cm.config, parent, h.Time)
 	}
 
 	b.uncles = append(b.uncles, h)
@@ -606,7 +606,7 @@ func (cm *chainMaker) makeHeader(parent *types.Block, state *state.StateDB, engi
 	header.GasLimit = cm.calcGasLimit(parentHeader, header)
 
 	if cm.config.IsLondon(header.Number) {
-		header.BaseFee = eip1559.CalcBaseFee(cm.config, parentHeader)
+		header.BaseFee = eip1559.CalcBaseFee(cm.config, parentHeader, header.Time)
 	}
 
 	if cm.config.IsCancun(header.Number, header.Time) {

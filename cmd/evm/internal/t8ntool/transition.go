@@ -188,7 +188,8 @@ func Transition(ctx *cli.Context) error {
 }
 
 func applyLondonChecks(env *stEnv, chainConfig *params.ChainConfig) error {
-	if !chainConfig.IsLondon(big.NewInt(int64(env.Number))) {
+	blockNumber := big.NewInt(int64(env.Number))
+	if !chainConfig.IsLondon(blockNumber) {
 		return nil
 	}
 	// Sanity check, to not `panic` in state_transition
@@ -199,12 +200,16 @@ func applyLondonChecks(env *stEnv, chainConfig *params.ChainConfig) error {
 	if env.ParentBaseFee == nil || env.Number == 0 {
 		return NewError(ErrorConfig, errors.New("EIP-1559 config but missing 'parentBaseFee' in env section"))
 	}
-	env.BaseFee = eip1559.CalcBaseFee(chainConfig, &types.Header{
-		Number:   new(big.Int).SetUint64(env.Number - 1),
-		BaseFee:  env.ParentBaseFee,
-		GasUsed:  env.ParentGasUsed,
-		GasLimit: env.ParentGasLimit,
-	})
+	env.BaseFee = eip1559.CalcBaseFee(
+		chainConfig,
+		&types.Header{
+			Number:   new(big.Int).SetUint64(env.Number - 1),
+			BaseFee:  env.ParentBaseFee,
+			GasUsed:  env.ParentGasUsed,
+			GasLimit: env.ParentGasLimit,
+		},
+		env.Timestamp,
+	)
 	return nil
 }
 
