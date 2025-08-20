@@ -62,12 +62,6 @@ const (
 	// limit can never hurt.
 	txMaxSize = 1024 * 1024
 
-	// maxBlobsPerTx is the maximum number of blobs that a single transaction can
-	// carry. We choose a smaller limit than the protocol-permitted MaxBlobsPerBlock
-	// in order to ensure network and txpool stability.
-	// Note: if you increase this, validation will fail on txMaxSize.
-	maxBlobsPerTx = params.BlobTxMaxBlobs
-
 	// maxTxsPerAccount is the maximum number of blob transactions admitted from
 	// a single account. The limit is enforced to minimize the DoS potential of
 	// a private tx cancelling publicly propagated blobs.
@@ -1095,6 +1089,7 @@ func (p *BlobPool) SetGasTip(tip *big.Int) {
 // This check is meant as an early check which only needs to be performed once,
 // and does not require the pool mutex to be held.
 func (p *BlobPool) ValidateTxBasics(tx *types.Transaction) error {
+	maxBlobsPerTx := p.chain.Config().BlobTxMaxBlobs(p.head.Time)
 	opts := &txpool.ValidationOptions{
 		Config:       p.chain.Config(),
 		Accept:       1 << types.BlobTxType,

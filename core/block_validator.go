@@ -50,7 +50,7 @@ func NewBlockValidator(config *params.ChainConfig, blockchain *BlockChain) *Bloc
 // validated at this point.
 func (v *BlockValidator) ValidateBody(block *types.Block) error {
 	// check EIP 7934 RLP-encoded block size cap
-	if v.config.IsOsaka(block.Number(), block.Time()) && block.Size() > params.MaxBlockSize {
+	if v.config.IsOsaka(block.Number(), block.Time()) && block.Size() > v.config.MaxBlockSize(block.Time()) {
 		return ErrBlockOversized
 	}
 	// Check whether the block is already imported.
@@ -166,30 +166,4 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 		return fmt.Errorf("invalid merkle root (remote: %x local: %x) dberr: %w", header.Root, root, statedb.Error())
 	}
 	return nil
-}
-
-// CalcGasLimit computes the gas limit of the next block after parent. It aims
-// to keep the baseline gas close to the provided target, and increase it towards
-// the target if the baseline gas is lower.
-func CalcGasLimit(parentGasLimit, desiredLimit uint64) uint64 {
-	delta := parentGasLimit/params.GasLimitBoundDivisor - 1
-	limit := parentGasLimit
-	if desiredLimit < params.MinGasLimit {
-		desiredLimit = params.MinGasLimit
-	}
-	// If we're outside our allowed gas range, we try to hone towards them
-	if limit < desiredLimit {
-		limit = parentGasLimit + delta
-		if limit > desiredLimit {
-			limit = desiredLimit
-		}
-		return limit
-	}
-	if limit > desiredLimit {
-		limit = parentGasLimit - delta
-		if limit < desiredLimit {
-			limit = desiredLimit
-		}
-	}
-	return limit
 }

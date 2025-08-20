@@ -653,6 +653,13 @@ func (evm *EVM) resolveCodeHash(addr common.Address) common.Hash {
 // ChainConfig returns the environment's chain configuration
 func (evm *EVM) ChainConfig() *params.ChainConfig { return evm.chainConfig }
 
+func (evm *EVM) SystemTransactionGasLimit() uint64 {
+	if evm.chainConfig.IsEIP7782(evm.Context.BlockNumber, evm.Context.Time) {
+		return params.SystemTransactionGasLimitEIP7782
+	}
+	return params.SystemTransactionGasLimit
+}
+
 func (evm *EVM) captureBegin(depth int, typ OpCode, from common.Address, to common.Address, input []byte, startGas uint64, value *big.Int) {
 	tracer := evm.Config.Tracer
 	if tracer.OnEnter != nil {

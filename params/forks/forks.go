@@ -40,6 +40,7 @@ const (
 	Cancun
 	Prague
 	Osaka
+	EIP7782
 )
 
 // String implements fmt.Stringer.
@@ -72,4 +73,5 @@ var forkToString = map[Fork]string{
 	Cancun:           "Cancun",
 	Prague:           "Prague",
 	Osaka:            "Osaka",
+	EIP7782:          "EIP-7782",
 }

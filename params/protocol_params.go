@@ -23,10 +23,12 @@ import (
 )
 
 const (
-	GasLimitBoundDivisor uint64 = 1024               // The bound divisor of the gas limit, used in update calculations.
-	MinGasLimit          uint64 = 5000               // Minimum the gas limit may ever be.
-	MaxGasLimit          uint64 = 0x7fffffffffffffff // Maximum the gas limit (2^63-1).
-	GenesisGasLimit      uint64 = 4712388            // Gas limit of the Genesis block.
+	GasLimitBoundDivisor        uint64 = 1024               // The bound divisor of the gas limit, used in update calculations.
+	GasLimitBoundDivisorEIP7782 uint64 = 2048               // The bound divisor of the gas limit, used in update calculations.
+	MinGasLimit                 uint64 = 5000               // Minimum the gas limit may ever be.
+	MinGasLimitEIP7782          uint64 = 2500               // Minimum the gas limit may ever be.
+	MaxGasLimit                 uint64 = 0x7fffffffffffffff // Maximum the gas limit (2^63-1).
+	GenesisGasLimit             uint64 = 4712388            // Gas limit of the Genesis block.
 
 	MaxTxGas uint64 = 1 << 24 // Maximum transaction gas limit after eip-7825 (16,777,216).
 
@@ -131,6 +133,7 @@ const (
 	CreateBySelfdestructGas uint64 = 25000
 
 	DefaultBaseFeeChangeDenominator = 8          // Bounds the amount the base fee can change between blocks.
+	BaseFeeChangeDenominatorEIP7782 = 16         // Bounds the amount the base fee can change between blocks in EIP-7782
 	DefaultElasticityMultiplier     = 2          // Bounds the maximum gas limit an EIP-1559 block may have.
 	InitialBaseFee                  = 1000000000 // Initial base fee for EIP-1559 blocks.
 
@@ -177,12 +180,22 @@ const (
 	BlobTxBlobGasPerBlob               = 1 << 17 // Gas consumption of a single data blob (== blob byte size)
 	BlobTxMinBlobGasprice              = 1       // Minimum gas price for data blobs
 	BlobTxPointEvaluationPrecompileGas = 50000   // Gas price for the point evaluation precompile.
-	BlobTxMaxBlobs                     = 6
 	BlobBaseCost                       = 1 << 13 // Base execution gas cost for a blob.
+
+	// BlobTxMaxBlobs is the maximum number of blobs that a single transaction can
+	// carry. We choose a smaller limit than the protocol-permitted MaxBlobsPerBlock
+	// in order to ensure network and txpool stability.
+	// Note: if you increase this, validation will fail on txMaxSize.
+	BlobTxMaxBlobs        = 6
+	BlobTxMaxBlobsEIP7782 = 3
 
 	HistoryServeWindow = 8192 // Number of blocks to serve historical block hashes for, EIP-2935.
 
-	MaxBlockSize = 8_388_608 // maximum size of an RLP-encoded block
+	MaxBlockSize        uint64 = 8_388_608 // maximum size of an RLP-encoded block
+	MaxBlockSizeEIP7782 uint64 = 4_194_304 // maximum size of an RLP-encoded block in EIP-7782
+
+	SystemTransactionGasLimit        uint64 = 30_000_000
+	SystemTransactionGasLimitEIP7782 uint64 = 15_000_000
 )
 
 // Bls12381G1MultiExpDiscountTable is the gas discount table for BLS12-381 G1 multi exponentiation operation

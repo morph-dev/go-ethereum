@@ -410,6 +410,7 @@ type ChainConfig struct {
 	CancunTime   *uint64 `json:"cancunTime,omitempty"`   // Cancun switch time (nil = no fork, 0 = already on cancun)
 	PragueTime   *uint64 `json:"pragueTime,omitempty"`   // Prague switch time (nil = no fork, 0 = already on prague)
 	OsakaTime    *uint64 `json:"osakaTime,omitempty"`    // Osaka switch time (nil = no fork, 0 = already on osaka)
+	EIP7782Time  *uint64 `json:"eip7782Time,omitempty"`  // EIP7782 switch time (nil = no fork, 0 = already on EIP7782)
 	VerkleTime   *uint64 `json:"verkleTime,omitempty"`   // Verkle switch time (nil = no fork, 0 = already on verkle)
 	BPO1Time     *uint64 `json:"bpo1Time,omitempty"`     // BPO1 switch time (nil = no fork, 0 = already on bpo1)
 	BPO2Time     *uint64 `json:"bpo2Time,omitempty"`     // BPO2 switch time (nil = no fork, 0 = already on bpo2)
@@ -533,8 +534,11 @@ func (c *ChainConfig) Description() string {
 	if c.OsakaTime != nil {
 		banner += fmt.Sprintf(" - Osaka:                      @%-10v\n", *c.OsakaTime)
 	}
+	if c.EIP7782Time != nil {
+		banner += fmt.Sprintf(" - EIP7782:                    @%-10v\n", *c.EIP7782Time)
+	}
 	if c.VerkleTime != nil {
-		banner += fmt.Sprintf(" - Verkle:                      @%-10v\n", *c.VerkleTime)
+		banner += fmt.Sprintf(" - Verkle:                     @%-10v\n", *c.VerkleTime)
 	}
 	if c.BPO1Time != nil {
 		banner += fmt.Sprintf(" - BPO1:                      @%-10v\n", *c.BPO1Time)
@@ -563,15 +567,50 @@ type BlobConfig struct {
 
 // BlobScheduleConfig determines target and max number of blobs allow per fork.
 type BlobScheduleConfig struct {
-	Cancun *BlobConfig `json:"cancun,omitempty"`
-	Prague *BlobConfig `json:"prague,omitempty"`
-	Osaka  *BlobConfig `json:"osaka,omitempty"`
-	Verkle *BlobConfig `json:"verkle,omitempty"`
-	BPO1   *BlobConfig `json:"bpo1,omitempty"`
-	BPO2   *BlobConfig `json:"bpo2,omitempty"`
-	BPO3   *BlobConfig `json:"bpo3,omitempty"`
-	BPO4   *BlobConfig `json:"bpo4,omitempty"`
-	BPO5   *BlobConfig `json:"bpo5,omitempty"`
+	Cancun  *BlobConfig `json:"cancun,omitempty"`
+	Prague  *BlobConfig `json:"prague,omitempty"`
+	Osaka   *BlobConfig `json:"osaka,omitempty"`
+	EIP7782 *BlobConfig `json:"eip7782,omitempty"`
+	Verkle  *BlobConfig `json:"verkle,omitempty"`
+	BPO1    *BlobConfig `json:"bpo1,omitempty"`
+	BPO2    *BlobConfig `json:"bpo2,omitempty"`
+	BPO3    *BlobConfig `json:"bpo3,omitempty"`
+	BPO4    *BlobConfig `json:"bpo4,omitempty"`
+	BPO5    *BlobConfig `json:"bpo5,omitempty"`
+}
+
+func (c *ChainConfig) LatestBlobConfig(time uint64) *BlobConfig {
+	if c.BlobScheduleConfig == nil {
+		return nil
+	}
+	var (
+		london = c.LondonBlock
+		s      = c.BlobScheduleConfig
+	)
+	switch {
+	case c.IsBPO5(london, time) && s.BPO5 != nil:
+		return s.BPO5
+	case c.IsBPO4(london, time) && s.BPO4 != nil:
+		return s.BPO4
+	case c.IsBPO3(london, time) && s.BPO3 != nil:
+		return s.BPO3
+	case c.IsBPO2(london, time) && s.BPO2 != nil:
+		return s.BPO2
+	case c.IsBPO1(london, time) && s.BPO1 != nil:
+		return s.BPO1
+	case c.IsVerkle(london, time) && s.Verkle != nil:
+		return s.Verkle
+	case c.IsEIP7782(london, time) && s.EIP7782 != nil:
+		return s.EIP7782
+	case c.IsOsaka(london, time) && s.Osaka != nil:
+		return s.Osaka
+	case c.IsPrague(london, time) && s.Prague != nil:
+		return s.Prague
+	case c.IsCancun(london, time) && s.Cancun != nil:
+		return s.Cancun
+	default:
+		return nil
+	}
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.
@@ -674,6 +713,11 @@ func (c *ChainConfig) IsOsaka(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.OsakaTime, time)
 }
 
+// IsEIP7782 returns whether time is either equal to the EIP7782 fork time or greater.
+func (c *ChainConfig) IsEIP7782(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.EIP7782Time, time)
+}
+
 // IsVerkle returns whether time is either equal to the Verkle fork time or greater.
 func (c *ChainConfig) IsVerkle(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.VerkleTime, time)
@@ -721,6 +765,35 @@ func (c *ChainConfig) IsVerkleGenesis() bool {
 // IsEIP4762 returns whether eip 4762 has been activated at given block.
 func (c *ChainConfig) IsEIP4762(num *big.Int, time uint64) bool {
 	return c.IsVerkle(num, time)
+}
+
+func (c *ChainConfig) MaxBlockSize(time uint64) uint64 {
+	if c.IsEIP7782(c.LondonBlock, time) {
+		return MaxBlockSizeEIP7782
+	}
+	return MaxBlockSize
+}
+
+func (c *ChainConfig) BlobTxMaxBlobs(time uint64) int {
+	if c.IsEIP7782(c.LondonBlock, time) {
+		return BlobTxMaxBlobsEIP7782
+	}
+	if c.IsOsaka(c.LondonBlock, time) {
+		return BlobTxMaxBlobs
+	}
+	blobConfig := c.LatestBlobConfig(time)
+	if blobConfig == nil {
+		return 0
+	}
+	return blobConfig.Max
+}
+
+// BaseFeeChangeDenominator bounds the amount the base fee can change between blocks, based on
+func (c *ChainConfig) BaseFeeChangeDenominator(time uint64) uint64 {
+	if c.IsEIP7782(c.LondonBlock, time) {
+		return BaseFeeChangeDenominatorEIP7782
+	}
+	return DefaultBaseFeeChangeDenominator
 }
 
 // CheckCompatible checks whether scheduled fork transitions have been imported
@@ -778,6 +851,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "cancunTime", timestamp: c.CancunTime, optional: true},
 		{name: "pragueTime", timestamp: c.PragueTime, optional: true},
 		{name: "osakaTime", timestamp: c.OsakaTime, optional: true},
+		{name: "eip7782", timestamp: c.EIP7782Time, optional: true},
 		{name: "verkleTime", timestamp: c.VerkleTime, optional: true},
 		{name: "bpo1", timestamp: c.BPO1Time, optional: true},
 		{name: "bpo2", timestamp: c.BPO2Time, optional: true},
@@ -833,6 +907,8 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "cancun", timestamp: c.CancunTime, config: bsc.Cancun},
 		{name: "prague", timestamp: c.PragueTime, config: bsc.Prague},
 		{name: "osaka", timestamp: c.OsakaTime, config: bsc.Osaka},
+		{name: "eip7782", timestamp: c.EIP7782Time, config: bsc.EIP7782},
+		{name: "verkle", timestamp: c.VerkleTime, config: bsc.Verkle},
 		{name: "bpo1", timestamp: c.BPO1Time, config: bsc.BPO1},
 		{name: "bpo2", timestamp: c.BPO2Time, config: bsc.BPO2},
 		{name: "bpo3", timestamp: c.BPO3Time, config: bsc.BPO3},
@@ -935,6 +1011,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkTimestampIncompatible(c.OsakaTime, newcfg.OsakaTime, headTimestamp) {
 		return newTimestampCompatError("Osaka fork timestamp", c.OsakaTime, newcfg.OsakaTime)
 	}
+	if isForkTimestampIncompatible(c.EIP7782Time, newcfg.EIP7782Time, headTimestamp) {
+		return newTimestampCompatError("EIP7782 fork timestamp", c.EIP7782Time, newcfg.EIP7782Time)
+	}
 	if isForkTimestampIncompatible(c.VerkleTime, newcfg.VerkleTime, headTimestamp) {
 		return newTimestampCompatError("Verkle fork timestamp", c.VerkleTime, newcfg.VerkleTime)
 	}
@@ -956,11 +1035,6 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	return nil
 }
 
-// BaseFeeChangeDenominator bounds the amount the base fee can change between blocks.
-func (c *ChainConfig) BaseFeeChangeDenominator() uint64 {
-	return DefaultBaseFeeChangeDenominator
-}
-
 // ElasticityMultiplier bounds the maximum gas limit an EIP-1559 block may have.
 func (c *ChainConfig) ElasticityMultiplier() uint64 {
 	return DefaultElasticityMultiplier
@@ -972,6 +1046,8 @@ func (c *ChainConfig) LatestFork(time uint64) forks.Fork {
 	london := c.LondonBlock
 
 	switch {
+	case c.IsEIP7782(london, time):
+		return forks.EIP7782
 	case c.IsOsaka(london, time):
 		return forks.Osaka
 	case c.IsPrague(london, time):
@@ -989,6 +1065,8 @@ func (c *ChainConfig) LatestFork(time uint64) forks.Fork {
 // the fork isn't defined or isn't a time-based fork.
 func (c *ChainConfig) Timestamp(fork forks.Fork) *uint64 {
 	switch {
+	case fork == forks.EIP7782:
+		return c.EIP7782Time
 	case fork == forks.Osaka:
 		return c.OsakaTime
 	case fork == forks.Prague:
@@ -1143,6 +1221,7 @@ type Rules struct {
 	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
 	IsBerlin, IsLondon                                      bool
 	IsMerge, IsShanghai, IsCancun, IsPrague, IsOsaka        bool
+	IsEIP7782                                               bool
 	IsVerkle                                                bool
 }
 
@@ -1173,6 +1252,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsCancun:         isMerge && c.IsCancun(num, timestamp),
 		IsPrague:         isMerge && c.IsPrague(num, timestamp),
 		IsOsaka:          isMerge && c.IsOsaka(num, timestamp),
+		IsEIP7782:        isMerge && c.IsEIP7782(num, timestamp),
 		IsVerkle:         isVerkle,
 		IsEIP4762:        isVerkle,
 	}

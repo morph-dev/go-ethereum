@@ -54,32 +54,8 @@ func (bc *BlobConfig) blobPrice(excessBlobGas uint64) *big.Int {
 }
 
 func latestBlobConfig(cfg *params.ChainConfig, time uint64) *BlobConfig {
-	if cfg.BlobScheduleConfig == nil {
-		return nil
-	}
-	var (
-		london = cfg.LondonBlock
-		s      = cfg.BlobScheduleConfig
-		bc     *params.BlobConfig
-	)
-	switch {
-	case cfg.IsBPO5(london, time) && s.BPO5 != nil:
-		bc = s.BPO5
-	case cfg.IsBPO4(london, time) && s.BPO4 != nil:
-		bc = s.BPO4
-	case cfg.IsBPO3(london, time) && s.BPO3 != nil:
-		bc = s.BPO3
-	case cfg.IsBPO2(london, time) && s.BPO2 != nil:
-		bc = s.BPO2
-	case cfg.IsBPO1(london, time) && s.BPO1 != nil:
-		bc = s.BPO1
-	case cfg.IsOsaka(london, time) && s.Osaka != nil:
-		bc = s.Osaka
-	case cfg.IsPrague(london, time) && s.Prague != nil:
-		bc = s.Prague
-	case cfg.IsCancun(london, time) && s.Cancun != nil:
-		bc = s.Cancun
-	default:
+	bc := cfg.LatestBlobConfig(time)
+	if bc == nil {
 		return nil
 	}
 

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
@@ -65,7 +66,8 @@ type environment struct {
 
 // txFits reports whether the transaction fits into the block size limit.
 func (env *environment) txFitsSize(tx *types.Transaction) bool {
-	return env.size+tx.Size() < params.MaxBlockSize-maxBlockSizeBufferZone
+	maxBlockSize := env.evm.ChainConfig().MaxBlockSize(env.header.Time)
+	return env.size+tx.Size() < maxBlockSize-maxBlockSizeBufferZone
 }
 
 const (
@@ -114,8 +116,8 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 	// Check withdrawals fit max block size.
 	// Due to the cap on withdrawal count, this can actually never happen, but we still need to
 	// check to ensure the CL notices there's a problem if the withdrawal cap is ever lifted.
-	maxBlockSize := params.MaxBlockSize - maxBlockSizeBufferZone
-	if genParam.withdrawals.Size() > maxBlockSize {
+	maxBlockSize := miner.chainConfig.MaxBlockSize(work.header.Time) - maxBlockSizeBufferZone
+	if genParam.withdrawals.Size() > int(maxBlockSize) {
 		return &newPayloadResult{err: errors.New("withdrawals exceed max block size")}
 	}
 	// Also add size of withdrawals to work block size.
@@ -206,10 +208,18 @@ func (miner *Miner) prepareWork(genParams *generateParams, witness bool) (*envir
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     new(big.Int).Add(parent.Number, common.Big1),
-		GasLimit:   core.CalcGasLimit(parent.GasLimit, miner.config.GasCeil),
 		Time:       timestamp,
 		Coinbase:   genParams.coinbase,
 	}
+
+	// Set GasLimit.
+	desiredGasLimit := miner.config.GasCeil
+	if miner.chainConfig.IsEIP7782(header.Number, header.Time) {
+		// TODO(EIP7782): consider adding different miner.config field
+		desiredGasLimit /= 2
+	}
+	header.GasLimit = misc.CalcGasLimit(miner.chainConfig, parent, header, desiredGasLimit)
+
 	// Set the extra field.
 	if len(miner.config.ExtraData) != 0 {
 		header.Extra = miner.config.ExtraData
@@ -218,13 +228,9 @@ func (miner *Miner) prepareWork(genParams *generateParams, witness bool) (*envir
 	if genParams.random != (common.Hash{}) {
 		header.MixDigest = genParams.random
 	}
-	// Set baseFee and GasLimit if we are on an EIP-1559 chain
+	// Set baseFee if we are on an EIP-1559 chainx
 	if miner.chainConfig.IsLondon(header.Number) {
 		header.BaseFee = eip1559.CalcBaseFee(miner.chainConfig, parent)
-		if !miner.chainConfig.IsLondon(parent.Number) {
-			parentGasLimit := parent.GasLimit * miner.chainConfig.ElasticityMultiplier()
-			header.GasLimit = core.CalcGasLimit(parentGasLimit, miner.config.GasCeil)
-		}
 	}
 	// Run the consensus preparation with the default or customized consensus engine.
 	// Note that the `header.Time` may be changed.

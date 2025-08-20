@@ -236,15 +236,14 @@ func (b *BlockGen) AddUncle(h *types.Header) {
 	}
 	h.Difficulty = b.engine.CalcDifficulty(b.cm, b.header.Time, parent)
 
-	// The gas limit and price should be derived from the parent
-	h.GasLimit = parent.GasLimit
+	// The gas limit should be derived from the parent
+	h.GasLimit = b.cm.calcGasLimit(parent, h)
+
+	// The base fee should be derived from the parent
 	if b.cm.config.IsLondon(h.Number) {
 		h.BaseFee = eip1559.CalcBaseFee(b.cm.config, parent)
-		if !b.cm.config.IsLondon(parent.Number) {
-			parentGasLimit := parent.GasLimit * b.cm.config.ElasticityMultiplier()
-			h.GasLimit = CalcGasLimit(parentGasLimit, parentGasLimit)
-		}
 	}
+
 	b.uncles = append(b.uncles, h)
 }
 
@@ -601,18 +600,15 @@ func (cm *chainMaker) makeHeader(parent *types.Block, state *state.StateDB, engi
 		ParentHash: parent.Hash(),
 		Coinbase:   parent.Coinbase(),
 		Difficulty: engine.CalcDifficulty(cm, time, parentHeader),
-		GasLimit:   parent.GasLimit(),
 		Number:     new(big.Int).Add(parent.Number(), common.Big1),
 		Time:       time,
 	}
+	header.GasLimit = cm.calcGasLimit(parentHeader, header)
 
 	if cm.config.IsLondon(header.Number) {
 		header.BaseFee = eip1559.CalcBaseFee(cm.config, parentHeader)
-		if !cm.config.IsLondon(parent.Number()) {
-			parentGasLimit := parent.GasLimit() * cm.config.ElasticityMultiplier()
-			header.GasLimit = CalcGasLimit(parentGasLimit, parentGasLimit)
-		}
 	}
+
 	if cm.config.IsCancun(header.Number, header.Time) {
 		excessBlobGas := eip4844.CalcExcessBlobGas(cm.config, parentHeader, time)
 		header.ExcessBlobGas = &excessBlobGas
@@ -736,4 +732,20 @@ func (cm *chainMaker) GetHeader(hash common.Hash, number uint64) *types.Header {
 
 func (cm *chainMaker) GetBlock(hash common.Hash, number uint64) *types.Block {
 	return cm.blockByNumber(number)
+}
+
+func (cm *chainMaker) calcGasLimit(parent, header *types.Header) uint64 {
+	desiredGasLimit := parent.GasLimit
+
+	// Handle London fork
+	if cm.config.IsLondon(header.Number) && !cm.config.IsLondon(parent.Number) {
+		desiredGasLimit *= cm.config.ElasticityMultiplier()
+	}
+
+	// Handle EIP-7782 fork
+	if cm.config.IsEIP7782(header.Number, header.Time) && !cm.config.IsEIP7782(parent.Number, parent.Time) {
+		desiredGasLimit /= 2
+	}
+
+	return misc.CalcGasLimit(cm.config, parent, header, desiredGasLimit)
 }

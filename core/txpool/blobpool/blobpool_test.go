@@ -1160,15 +1160,18 @@ func TestBlobCountLimit(t *testing.T) {
 	// Make Prague-enabled custom chain config.
 	cancunTime := uint64(0)
 	pragueTime := uint64(0)
+	osakaTime := uint64(0)
 	config := &params.ChainConfig{
 		ChainID:     big.NewInt(1),
 		LondonBlock: big.NewInt(0),
 		BerlinBlock: big.NewInt(0),
 		CancunTime:  &cancunTime,
 		PragueTime:  &pragueTime,
+		OsakaTime:   &osakaTime,
 		BlobScheduleConfig: &params.BlobScheduleConfig{
 			Cancun: params.DefaultCancunBlobConfig,
 			Prague: params.DefaultPragueBlobConfig,
+			Osaka:  params.DefaultOsakaBlobConfig,
 		},
 	}
 	chain := &testBlockChain{
@@ -1176,6 +1179,11 @@ func TestBlobCountLimit(t *testing.T) {
 		basefee: uint256.NewInt(1050),
 		blobfee: uint256.NewInt(105),
 		statedb: statedb,
+		blocks: map[uint64]*types.Block{
+			0: types.NewBlockWithHeader(&types.Header{
+				Time: pragueTime,
+			}),
+		},
 	}
 	pool := New(Config{Datadir: t.TempDir()}, chain, nil)
 	if err := pool.Init(1, chain.CurrentBlock(), newReserver()); err != nil {
@@ -1184,17 +1192,17 @@ func TestBlobCountLimit(t *testing.T) {
 
 	// Attempt to add transactions.
 	var (
-		tx1 = makeMultiBlobTx(0, 1, 1000, 100, 6, 0, key1, types.BlobSidecarVersion0)
-		tx2 = makeMultiBlobTx(0, 1, 800, 70, 7, 0, key2, types.BlobSidecarVersion0)
+		tx1 = makeMultiBlobTx(0, 1, 1000, 100, 6, 0, key1, types.BlobSidecarVersion1)
+		tx2 = makeMultiBlobTx(0, 1, 800, 70, 7, 0, key2, types.BlobSidecarVersion1)
 	)
 	errs := pool.Add([]*types.Transaction{tx1, tx2}, true)
 
 	// Check that first succeeds second fails.
 	if errs[0] != nil {
-		t.Fatalf("expected tx with 7 blobs to succeed")
+		t.Fatalf("expected tx with 6 blobs to succeed, got: %v, ", errs[0])
 	}
 	if !errors.Is(errs[1], txpool.ErrTxBlobLimitExceeded) {
-		t.Fatalf("expected tx with 8 blobs to fail, got: %v", errs[1])
+		t.Fatalf("expected tx with 7 blobs to fail, got: %v", errs[1])
 	}
 
 	verifyPoolInternals(t, pool)
@@ -1675,7 +1683,7 @@ func TestGetBlobs(t *testing.T) {
 	storage := t.TempDir()
 
 	os.MkdirAll(filepath.Join(storage, pendingTransactionStore), 0700)
-	store, _ := billy.Open(billy.Options{Path: filepath.Join(storage, pendingTransactionStore)}, newSlotter(params.BlobTxMaxBlobs), nil)
+	store, _ := billy.Open(billy.Options{Path: filepath.Join(storage, pendingTransactionStore)}, newSlotter(6), nil)
 
 	// Create transactions from a few accounts.
 	var (
