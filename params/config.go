@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/params/forks"
@@ -765,6 +766,13 @@ func (c *ChainConfig) IsVerkleGenesis() bool {
 // IsEIP4762 returns whether eip 4762 has been activated at given block.
 func (c *ChainConfig) IsEIP4762(num *big.Int, time uint64) bool {
 	return c.IsVerkle(num, time)
+}
+
+func (c *ChainConfig) SecondsPerSlot(timestamp uint64) time.Duration {
+	if c.IsEIP7782(c.LondonBlock, timestamp) {
+		return time.Second * 6
+	}
+	return time.Second * 12
 }
 
 func (c *ChainConfig) MaxBlockSize(time uint64) uint64 {
