@@ -228,7 +228,7 @@ func (miner *Miner) prepareWork(genParams *generateParams, witness bool) (*envir
 	if genParams.random != (common.Hash{}) {
 		header.MixDigest = genParams.random
 	}
-	// Set baseFee if we are on an EIP-1559 chainx
+	// Set baseFee if we are on an EIP-1559 chain
 	if miner.chainConfig.IsLondon(header.Number) {
 		header.BaseFee = eip1559.CalcBaseFee(miner.chainConfig, parent, header.Time)
 	}

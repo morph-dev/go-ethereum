@@ -223,7 +223,7 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, evm *vm.EVM) {
 	}
 	msg := &Message{
 		From:      params.SystemAddress,
-		GasLimit:  evm.SystemTransactionGasLimit(),
+		GasLimit:  params.SystemTransactionGasLimit,
 		GasPrice:  common.Big0,
 		GasFeeCap: common.Big0,
 		GasTipCap: common.Big0,
@@ -247,7 +247,7 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 	}
 	msg := &Message{
 		From:      params.SystemAddress,
-		GasLimit:  evm.SystemTransactionGasLimit(),
+		GasLimit:  params.SystemTransactionGasLimit,
 		GasPrice:  common.Big0,
 		GasFeeCap: common.Big0,
 		GasTipCap: common.Big0,
@@ -287,7 +287,7 @@ func processRequestsSystemCall(requests *[][]byte, evm *vm.EVM, requestType byte
 	}
 	msg := &Message{
 		From:      params.SystemAddress,
-		GasLimit:  evm.SystemTransactionGasLimit(),
+		GasLimit:  params.SystemTransactionGasLimit,
 		GasPrice:  common.Big0,
 		GasFeeCap: common.Big0,
 		GasTipCap: common.Big0,

@@ -194,8 +194,7 @@ const (
 	MaxBlockSize        uint64 = 8_388_608 // maximum size of an RLP-encoded block
 	MaxBlockSizeEIP7782 uint64 = 4_194_304 // maximum size of an RLP-encoded block in EIP-7782
 
-	SystemTransactionGasLimit        uint64 = 30_000_000
-	SystemTransactionGasLimitEIP7782 uint64 = 15_000_000
+	SystemTransactionGasLimit uint64 = 30_000_000
 )
 
 // Bls12381G1MultiExpDiscountTable is the gas discount table for BLS12-381 G1 multi exponentiation operation
