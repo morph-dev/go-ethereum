@@ -160,10 +160,12 @@ func (c *AccessListBuilder) SelfDestruct(address common.Address) {
 	}
 
 	access.storageMutations = nil
-	access.nonce = nil
-	// TODO: should this be set to zero?  the semantics are that nil means unmodified since the prestate of the block.
-	access.balance = nil
-	access.code = nil
+	/*
+		access.nonce = nil
+		// TODO: should this be set to zero?  the semantics are that nil means unmodified since the prestate of the block.
+		access.balance = nil
+		access.code = nil
+	*/
 }
 
 func (c *AccessListBuilder) NonceChange(address common.Address, prev, cur uint64) {
@@ -235,7 +237,7 @@ func (a *AccessListBuilder) FinaliseIdxChanges() (*StateDiff, StateAccesses) {
 
 		// if the account has no net mutations against the tx prestate, only include
 		// it in the state read set
-		if access.code == nil && access.nonce == nil && access.balance == nil && len(access.storageMutations) == 0 {
+		if len(access.code) == 0 && access.nonce == nil && access.balance == nil && len(access.storageMutations) == 0 {
 			stateAccesses[addr] = make(map[common.Hash]struct{})
 			if access.storageReads != nil {
 				stateAccesses[addr] = access.storageReads
