@@ -55,6 +55,7 @@ func (e *BlockAccessList) DecodeRLP(dec *rlp.Stream) error {
 	if _, err := dec.List(); err != nil {
 		return err
 	}
+	*e = (*e)[:0]
 	for dec.MoreDataInList() {
 		var access AccountAccess
 		if err := access.DecodeRLP(dec); err != nil {
@@ -62,6 +63,7 @@ func (e *BlockAccessList) DecodeRLP(dec *rlp.Stream) error {
 		}
 		*e = append(*e, access)
 	}
+	dec.ListEnd()
 	return nil
 }
 
