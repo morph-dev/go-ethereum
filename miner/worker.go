@@ -153,11 +153,11 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 			return &newPayloadResult{err: err}
 		}
 		// EIP-7002
-		if _, _, err := core.ProcessWithdrawalQueue(&requests, work.evm); err != nil {
+		if err := core.ProcessWithdrawalQueue(&requests, work.evm); err != nil {
 			return &newPayloadResult{err: err}
 		}
 		// EIP-7251 consolidations
-		if _, _, err := core.ProcessConsolidationQueue(&requests, work.evm); err != nil {
+		if err := core.ProcessConsolidationQueue(&requests, work.evm); err != nil {
 			return &newPayloadResult{err: err}
 		}
 	}
@@ -280,7 +280,7 @@ func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase
 	vmConf := vm.Config{}
 	var alTracer *core.BlockAccessListTracer
 	if miner.chainConfig.IsAmsterdam(header.Number, header.Time) {
-		alTracer, vmConf.Tracer = core.NewBlockAccessListTracer()
+		alTracer, vmConf.Tracer = core.NewBlockAccessListTracer(0)
 	}
 	// Note the passed coinbase may be different with header.Coinbase.
 	return &environment{

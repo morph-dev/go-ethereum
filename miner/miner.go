@@ -96,7 +96,7 @@ func (miner *Miner) Pending() (*types.Block, types.Receipts, *state.StateDB) {
 	if pending == nil {
 		return nil, nil, nil
 	}
-	return pending.block, pending.receipts, pending.stateDB.Copy().(*state.StateDB)
+	return pending.block, pending.receipts, pending.stateDB.Copy()
 }
 
 // SetExtra sets the content used to initialize the block extra field.
