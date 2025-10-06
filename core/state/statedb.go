@@ -347,6 +347,11 @@ func (s *StateDB) Exist(addr common.Address) bool {
 	return s.getStateObject(addr) != nil
 }
 
+func (s *StateDB) ExistBeforeCurTx(addr common.Address) bool {
+	obj := s.getStateObject(addr)
+	return obj != nil && !obj.newContract
+}
+
 // Empty returns whether the state object is either non-existent
 // or empty according to the EIP161 specification (balance = nonce = code = 0)
 func (s *StateDB) Empty(addr common.Address) bool {
