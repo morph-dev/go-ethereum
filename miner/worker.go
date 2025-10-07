@@ -170,6 +170,12 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 	if err != nil {
 		return &newPayloadResult{err: err}
 	}
+	if miner.chainConfig.IsAmsterdam(block.Number(), block.Time()) {
+		fmt.Println("embed")
+		body := block.Body()
+		body.AccessList = work.alTracer.AccessList().ToEncodingObj()
+		block = block.WithBody(*body)
+	}
 	return &newPayloadResult{
 		block:    block,
 		fees:     totalFees(block, work.receipts),
