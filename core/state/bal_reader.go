@@ -173,7 +173,7 @@ func (r *BALReader) ValidateStateReads(allReads bal.StateAccesses) error {
 			}
 		}
 		if _, ok := r.accesses[addr]; !ok {
-			panic(fmt.Sprintf("%x wasn't in BAL", addr))
+			return fmt.Errorf("%x wasn't in BAL", addr)
 		}
 
 		expectedReads := r.accesses[addr].StorageReads

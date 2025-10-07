@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -23,6 +24,7 @@ type BlockAccessListTracer struct {
 	// scopes are in the proceeding indices.
 	// When an execution scope terminates in a non-reverting fashion, the changes are
 	// merged into the access list of the parent scope.
+	blockTxCount      int
 	accessList        *bal.ConstructionBlockAccessList
 	balIdx            uint16
 	accessListBuilder *bal.AccessListBuilder
@@ -35,13 +37,13 @@ type BlockAccessListTracer struct {
 // NewBlockAccessListTracer returns an BlockAccessListTracer and a set of hooks
 func NewBlockAccessListTracer(startIdx int) (*BlockAccessListTracer, *tracing.Hooks) {
 	balTracer := &BlockAccessListTracer{
-		accessList:        bal.NewConstructionBlockAccessList(),
-		balIdx:            uint16(startIdx),
+		accessList: bal.NewConstructionBlockAccessList(),
+		//balIdx:            uint16(startIdx),
 		accessListBuilder: bal.NewAccessListBuilder(),
 	}
 	hooks := &tracing.Hooks{
-		OnTxExecutionEnd:     balTracer.OnTxExecutionEnd,
-		OnTxStart:            balTracer.TxStartHook,
+		OnBlockFinalization:  balTracer.OnBlockFinalization,
+		OnPreTxExecutionDone: balTracer.OnPreTxExecutionDone,
 		OnTxEnd:              balTracer.TxEndHook,
 		OnEnter:              balTracer.OnEnter,
 		OnExit:               balTracer.OnExit,
@@ -67,10 +69,12 @@ func (a *BlockAccessListTracer) AccessList() *bal.ConstructionBlockAccessList {
 	return a.accessList
 }
 
-func (a *BlockAccessListTracer) Finalise() {
+func (a *BlockAccessListTracer) OnPreTxExecutionDone() {
 	a.idxMutations, a.idxReads = a.accessListBuilder.FinaliseIdxChanges()
-	a.accessList.Apply(a.balIdx, a.idxMutations, a.idxReads)
-	a.accessListBuilder = new(bal.AccessListBuilder)
+	fmt.Printf("finalize pre-tx exec changes: %v, %v\n", a.idxMutations, a.idxReads)
+	a.accessList.Apply(0, a.idxMutations, a.idxReads)
+	a.accessListBuilder = bal.NewAccessListBuilder()
+	a.balIdx++
 }
 
 // TODO: I don't like that AccessList and this do slightly different things,
@@ -79,6 +83,7 @@ func (a *BlockAccessListTracer) Finalise() {
 // ^ idea: add Finalize() which returns the diff/accesses, also accumulating them in the BAL.
 // AccessList just returns the constructed BAL.
 func (a *BlockAccessListTracer) IdxChanges() (*bal.StateDiff, bal.StateAccesses) {
+	fmt.Printf("retrieve idx changes %v, %v\n", a.idxMutations, a.idxReads)
 	return a.idxMutations, a.idxReads
 }
 
@@ -87,15 +92,6 @@ func (a *BlockAccessListTracer) TxEndHook(receipt *types.Receipt, err error) {
 	a.accessList.Apply(a.balIdx, a.idxMutations, a.idxReads)
 	a.accessListBuilder = bal.NewAccessListBuilder()
 	a.balIdx++
-}
-
-func (a *BlockAccessListTracer) TxStartHook(vm *tracing.VMContext, tx *types.Transaction, from common.Address) {
-	if a.balIdx == 0 {
-		diff, reads := a.accessListBuilder.FinaliseIdxChanges()
-		a.accessList.Apply(0, diff, reads)
-		a.accessListBuilder = bal.NewAccessListBuilder()
-		a.balIdx++
-	}
 }
 
 func (a *BlockAccessListTracer) OnEnter(depth int, typ byte, from common.Address, to common.Address, input []byte, gas uint64, value *big.Int) {
@@ -118,19 +114,10 @@ func (a *BlockAccessListTracer) OnSelfDestruct(addr common.Address) {
 	a.accessListBuilder.SelfDestruct(addr)
 }
 
-func (a *BlockAccessListTracer) OnTxExecutionEnd() {
-	// this is a terrible hack:  in the case where the block has zero txs, we need
-	// a way to signal that the post-tx block operations are being executed (set the
-	// bal idx to a correct value).
-	//
-	// if the block had transactions, the end of the last tx would have bumped the balIdx
-	// to the correct value.
-	if a.balIdx == 0 {
-		diff, reads := a.accessListBuilder.FinaliseIdxChanges()
-		a.accessList.Apply(a.balIdx, diff, reads)
-		a.accessListBuilder = bal.NewAccessListBuilder()
-		a.balIdx++
-	}
+func (a *BlockAccessListTracer) OnBlockFinalization() {
+	a.idxMutations, a.idxReads = a.accessListBuilder.FinaliseIdxChanges()
+	a.accessList.Apply(a.balIdx, a.idxMutations, a.idxReads)
+	a.accessListBuilder = bal.NewAccessListBuilder()
 }
 
 func (a *BlockAccessListTracer) OnBalanceChange(addr common.Address, prevBalance, newBalance *big.Int, _ tracing.BalanceChangeReason) {
@@ -144,13 +131,16 @@ func (a *BlockAccessListTracer) OnNonceChange(addr common.Address, prev uint64, 
 }
 
 func (a *BlockAccessListTracer) OnColdStorageRead(addr common.Address, key common.Hash) {
+	fmt.Printf("cold storage read %x: %x\n", addr, key)
 	a.accessListBuilder.StorageRead(addr, key)
 }
 
 func (a *BlockAccessListTracer) OnColdAccountRead(addr common.Address) {
+	fmt.Printf("cold account read %x\n", addr)
 	a.accessListBuilder.AccountRead(addr)
 }
 
 func (a *BlockAccessListTracer) OnStorageChange(addr common.Address, slot common.Hash, prev common.Hash, new common.Hash) {
+	fmt.Printf("addr %x, slot %x, new %x\n", addr, slot, new)
 	a.accessListBuilder.StorageWrite(addr, slot, prev, new)
 }

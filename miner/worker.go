@@ -19,6 +19,7 @@ package miner
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"math/big"
 	"sync/atomic"
 	"time"
@@ -166,16 +167,24 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 		work.header.RequestsHash = &reqHash
 	}
 
-	block, err := miner.engine.FinalizeAndAssemble(miner.chain, work.header, work.state, &body, work.receipts)
+	// set the block access list on the body after the block has finished executing
+	// but before the header hash is computed (in FinalizeAndAssemble).
+	//
+	// I considered trying to instantiate the beacon consensus engine with a tracer.
+	// however, the BAL tracer instance is used once per block, while the engine object
+	// lives for the entire time the client is running.
+	onBlockFinalization := func() {
+		if miner.chainConfig.IsAmsterdam(work.header.Number, work.header.Time) {
+			work.alTracer.OnBlockFinalization()
+			body.AccessList = work.alTracer.AccessList().ToEncodingObj()
+		}
+	}
+
+	block, err := miner.engine.FinalizeAndAssemble(miner.chain, work.header, work.state, &body, work.receipts, onBlockFinalization)
 	if err != nil {
 		return &newPayloadResult{err: err}
 	}
-	if miner.chainConfig.IsAmsterdam(block.Number(), block.Time()) {
-		fmt.Println("embed")
-		body := block.Body()
-		body.AccessList = work.alTracer.AccessList().ToEncodingObj()
-		block = block.WithBody(*body)
-	}
+
 	return &newPayloadResult{
 		block:    block,
 		fees:     totalFees(block, work.receipts),
@@ -261,10 +270,16 @@ func (miner *Miner) prepareWork(genParams *generateParams, witness bool) (*envir
 		return nil, err
 	}
 	if header.ParentBeaconRoot != nil {
+		fmt.Printf("miner process parent block root: %x\n", *header.ParentBeaconRoot)
 		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, env.evm)
 	}
 	if miner.chainConfig.IsPrague(header.Number, header.Time) {
+		fmt.Printf("miner process parent block hash: %x\n", header.ParentHash)
 		core.ProcessParentBlockHash(header.ParentHash, env.evm)
+	}
+	if miner.chainConfig.IsAmsterdam(header.Number, header.Time) {
+		fmt.Println("miner foobar")
+		env.alTracer.OnPreTxExecutionDone()
 	}
 	return env, nil
 }
@@ -272,7 +287,7 @@ func (miner *Miner) prepareWork(genParams *generateParams, witness bool) (*envir
 // makeEnv creates a new environment for the sealing block.
 func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase common.Address, witness bool) (*environment, error) {
 	// Retrieve the parent state to execute on top.
-	state, err := miner.chain.StateAt(parent.Root)
+	sdb, err := miner.chain.StateAt(parent.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -281,22 +296,26 @@ func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase
 		if err != nil {
 			return nil, err
 		}
-		state.StartPrefetcher("miner", bundle, nil)
+		sdb.StartPrefetcher("miner", bundle, nil)
 	}
-	vmConf := vm.Config{}
 	var alTracer *core.BlockAccessListTracer
+	var hooks *tracing.Hooks
+	var hookedState vm.StateDB = sdb
+	var vmConfig vm.Config
 	if miner.chainConfig.IsAmsterdam(header.Number, header.Time) {
-		alTracer, vmConf.Tracer = core.NewBlockAccessListTracer(0)
+		alTracer, hooks = core.NewBlockAccessListTracer(0)
+		hookedState = state.NewHookedState(sdb, hooks)
+		vmConfig.Tracer = hooks
 	}
 	// Note the passed coinbase may be different with header.Coinbase.
 	return &environment{
 		signer:   types.MakeSigner(miner.chainConfig, header.Number, header.Time),
-		state:    state,
+		state:    sdb,
 		size:     uint64(header.Size()),
 		coinbase: coinbase,
 		header:   header,
-		witness:  state.Witness(),
-		evm:      vm.NewEVM(core.NewEVMBlockContext(header, miner.chain, &coinbase), state, miner.chainConfig, vmConf),
+		witness:  sdb.Witness(),
+		evm:      vm.NewEVM(core.NewEVMBlockContext(header, miner.chain, &coinbase), hookedState, miner.chainConfig, vmConfig),
 		alTracer: alTracer,
 	}, nil
 }

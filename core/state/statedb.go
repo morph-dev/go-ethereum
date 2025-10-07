@@ -1078,6 +1078,7 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 			s.witnessStats.Add(witness, common.Hash{})
 		}
 	}
+
 	return hash
 }
 

@@ -89,6 +89,10 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		ProcessParentBlockHash(block.ParentHash(), evm)
 	}
 
+	if hooks := cfg.Tracer; hooks != nil {
+		hooks.OnPreTxExecutionDone()
+	}
+
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		msg, err := TransactionToMessage(tx, signer, header.BaseFee)
@@ -105,9 +109,6 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		allLogs = append(allLogs, receipt.Logs...)
 	}
 
-	if hooks := cfg.Tracer; hooks != nil {
-		hooks.OnTxExecutionEnd()
-	}
 	// TODO: how do we signal to the BAL tracer that we are computing post-tx state changes here?
 	// if there are no txs in the block, then it will just record these state diffs at idx 0
 
@@ -131,6 +132,10 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.chain.engine.Finalize(p.chain, header, tracingStateDB, block.Body())
+
+	if hooks := cfg.Tracer; hooks != nil {
+		hooks.OnBlockFinalization()
+	}
 
 	return &ProcessResult{
 		Receipts: receipts,

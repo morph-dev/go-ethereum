@@ -19,8 +19,6 @@ package engine
 import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/core/types/bal"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/rlp"
 	"math/big"
 	"slices"
 
@@ -302,10 +300,8 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 	body := types.Body{Transactions: txs, Uncles: nil, Withdrawals: data.Withdrawals}
 	if data.BlockAccessList != nil {
 		body.AccessList = data.BlockAccessList
-		// Calculate the hash of the RLP-encoded BAL
-		rlpBytes, _ := rlp.EncodeToBytes(data.BlockAccessList)
-		h := crypto.Keccak256Hash(rlpBytes)
-		blockAccessListHash = &h
+		balHash := data.BlockAccessList.Hash()
+		blockAccessListHash = &balHash
 	}
 
 	header := &types.Header{

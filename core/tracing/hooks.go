@@ -217,7 +217,9 @@ type Hooks struct {
 	OnSystemCallStart   OnSystemCallStartHook
 	OnSystemCallStartV2 OnSystemCallStartHookV2
 	OnSystemCallEnd     OnSystemCallEndHook
-	OnTxExecutionEnd    func()
+
+	OnPreTxExecutionDone func() // called after pre-tx system contracts are invoked
+	OnBlockFinalization  func() // called after post-tx system contracts and consensus finalization are invoked
 
 	// State events
 	OnBalanceChange      BalanceChangeHook
