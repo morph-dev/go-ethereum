@@ -103,7 +103,6 @@ func (e *BlockAccessList) Hash() common.Hash {
 		// under reasonable conditions.
 		panic(err)
 	}
-	fmt.Printf("bal hash %x\n", enc.Bytes())
 	return crypto.Keccak256Hash(enc.Bytes())
 }
 
@@ -165,6 +164,29 @@ func (e *AccountAccess) validate() error {
 	for _, write := range e.StorageChanges {
 		if err := write.validate(); err != nil {
 			return err
+		}
+	}
+	// test case ideas: keys in both read/writes, duplicate keys in either read/writes
+	// ensure that the read and write key sets are distinct
+	readKeys := make(map[common.Hash]struct{})
+	writeKeys := make(map[common.Hash]struct{})
+	for _, readKey := range e.StorageReads {
+		if _, ok := readKeys[readKey]; ok {
+			return errors.New("duplicate read key")
+		}
+		readKeys[readKey] = struct{}{}
+	}
+	for _, write := range e.StorageChanges {
+		writeKey := write.Slot
+		if _, ok := writeKeys[writeKey]; ok {
+			return errors.New("duplicate write key")
+		}
+		writeKeys[writeKey] = struct{}{}
+	}
+
+	for readKey := range readKeys {
+		if _, ok := writeKeys[readKey]; ok {
+			return errors.New("storage key reported in both read/write sets")
 		}
 	}
 
@@ -318,8 +340,3 @@ func (c *ConstructionBlockAccessList) ToEncodingObj() *BlockAccessList {
 }
 
 type ContractCode []byte
-
-func (c *ContractCode) MarshalJSON() ([]byte, error) {
-	hexStr := fmt.Sprintf("%x", *c)
-	return json.Marshal(hexStr)
-}

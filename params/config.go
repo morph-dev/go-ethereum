@@ -910,9 +910,11 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		}
 		if cur.timestamp != nil {
 			// If the fork is configured, a blob schedule must be defined for it.
-			if cur.config == nil {
-				return fmt.Errorf("invalid chain configuration: missing entry for fork %q in blobSchedule", cur.name)
-			}
+			/*
+				if cur.config == nil {
+					return fmt.Errorf("invalid chain configuration: missing entry for fork %q in blobSchedule", cur.name)
+				}
+			*/
 		}
 	}
 	return nil

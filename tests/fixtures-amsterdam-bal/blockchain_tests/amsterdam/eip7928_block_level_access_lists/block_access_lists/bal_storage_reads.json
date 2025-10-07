@@ -302,7 +302,7 @@
                                 "slot": "0x0000000000000000000000000000000000000000000000000000000000000000",
                                 "slotChanges": [
                                     {
-                                        "txIndex": 0,
+                                        "txIndex": "0x0",
                                         "postValue": "0x3e1b7b2e45eae4e89d8c4112f43d929b7315f4551736961c067b5ca006e91902"
                                     }
                                 ]
@@ -320,7 +320,7 @@
                                 "slot": "0x000000000000000000000000000000000000000000000000000000000000000c",
                                 "slotChanges": [
                                     {
-                                        "txIndex": 0,
+                                        "txIndex": "0x0",
                                         "postValue": "0x000000000000000000000000000000000000000000000000000000000000000c"
                                     }
                                 ]
@@ -345,7 +345,7 @@
                         "nonceChanges": [],
                         "balanceChanges": [
                             {
-                                "txIndex": 1,
+                                "txIndex": "0x1",
                                 "postBalance": "0x10ebd"
                             }
                         ],
@@ -357,13 +357,13 @@
                         "address": "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b",
                         "nonceChanges": [
                             {
-                                "txIndex": 1,
-                                "postNonce": "1"
+                                "txIndex": "0x1",
+                                "postNonce": "0x1"
                             }
                         ],
                         "balanceChanges": [
                             {
-                                "txIndex": 1,
+                                "txIndex": "0x1",
                                 "postBalance": "0x3635c9adc5de9c798a"
                             }
                         ],
@@ -378,11 +378,11 @@
         ],
         "sealEngine": "NoProof",
         "_info": {
-            "hash": "0x89cf1419f76bd33195b33bd5b3012a8216f6c86207f378cecb9e461be2432a9a",
+            "hash": "0x5d2e6980d3177b8e4cc49bc03ee685e5de43c992a8dea2e6aba3977a12719e65",
             "comment": "`execution-spec-tests` generated test",
             "filling-transition-tool": "ethereum-spec-evm-resolver 0.0.5",
             "description": "Ensure BAL captures storage reads.",
-            "url": "https://github.com/ethereum/execution-spec-tests/blob/a7544eb16dc8661c4dd5771033b7e68542bdaf4f/tests/amsterdam/eip7928_block_level_access_lists/test_block_access_lists.py#L173",
+            "url": "https://github.com/ethereum/execution-spec-tests/blob/6a946f18074f2a6179de669ca88d2a5b261c34f4/tests/amsterdam/eip7928_block_level_access_lists/test_block_access_lists.py#L173",
             "fixture-format": "blockchain_test",
             "reference-spec": "https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7928.md",
             "reference-spec-version": "35732baa14cfea785d9c58d5f18033392b7ed886",

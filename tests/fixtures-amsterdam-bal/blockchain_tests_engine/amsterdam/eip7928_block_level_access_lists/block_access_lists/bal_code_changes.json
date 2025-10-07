@@ -250,16 +250,16 @@
                     "0x0000000000000000000000000000000000000000000000000000000000000000",
                     []
                 ],
-                "newPayloadVersion": "4",
+                "newPayloadVersion": "5",
                 "forkchoiceUpdatedVersion": "3"
             }
         ],
         "_info": {
-            "hash": "0xd3784eba180519598f28c99a7702e75ef1f395da4a57522acdae9633a3f6222d",
+            "hash": "0x528789a689602f542188501afcb4b0a74f656c715a5c7e8118d7dc40b2720840",
             "comment": "`execution-spec-tests` generated test",
             "filling-transition-tool": "ethereum-spec-evm-resolver 0.0.5",
             "description": "Ensure BAL captures changes to account code.",
-            "url": "https://github.com/ethereum/execution-spec-tests/blob/a7544eb16dc8661c4dd5771033b7e68542bdaf4f/tests/amsterdam/eip7928_block_level_access_lists/test_block_access_lists.py#L212",
+            "url": "https://github.com/ethereum/execution-spec-tests/blob/6a946f18074f2a6179de669ca88d2a5b261c34f4/tests/amsterdam/eip7928_block_level_access_lists/test_block_access_lists.py#L212",
             "fixture-format": "blockchain_test_engine",
             "reference-spec": "https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7928.md",
             "reference-spec-version": "35732baa14cfea785d9c58d5f18033392b7ed886",
