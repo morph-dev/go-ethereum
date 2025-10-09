@@ -1,7 +1,6 @@
 package core
 
 import (
-	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -71,7 +70,6 @@ func (a *BlockAccessListTracer) AccessList() *bal.ConstructionBlockAccessList {
 
 func (a *BlockAccessListTracer) OnPreTxExecutionDone() {
 	a.idxMutations, a.idxReads = a.accessListBuilder.FinaliseIdxChanges()
-	fmt.Printf("finalize pre-tx exec changes: %v, %v\n", a.idxMutations, a.idxReads)
 	a.accessList.Apply(0, a.idxMutations, a.idxReads)
 	a.accessListBuilder = bal.NewAccessListBuilder()
 	a.balIdx++
@@ -83,7 +81,6 @@ func (a *BlockAccessListTracer) OnPreTxExecutionDone() {
 // ^ idea: add Finalize() which returns the diff/accesses, also accumulating them in the BAL.
 // AccessList just returns the constructed BAL.
 func (a *BlockAccessListTracer) IdxChanges() (*bal.StateDiff, bal.StateAccesses) {
-	fmt.Printf("retrieve idx changes %v, %v\n", a.idxMutations, a.idxReads)
 	return a.idxMutations, a.idxReads
 }
 
@@ -131,16 +128,13 @@ func (a *BlockAccessListTracer) OnNonceChange(addr common.Address, prev uint64, 
 }
 
 func (a *BlockAccessListTracer) OnColdStorageRead(addr common.Address, key common.Hash) {
-	fmt.Printf("cold storage read %x: %x\n", addr, key)
 	a.accessListBuilder.StorageRead(addr, key)
 }
 
 func (a *BlockAccessListTracer) OnColdAccountRead(addr common.Address) {
-	fmt.Printf("cold account read %x\n", addr)
 	a.accessListBuilder.AccountRead(addr)
 }
 
 func (a *BlockAccessListTracer) OnStorageChange(addr common.Address, slot common.Hash, prev common.Hash, new common.Hash) {
-	fmt.Printf("addr %x, slot %x, new %x\n", addr, slot, new)
 	a.accessListBuilder.StorageWrite(addr, slot, prev, new)
 }

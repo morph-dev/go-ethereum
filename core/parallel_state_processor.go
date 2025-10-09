@@ -137,8 +137,6 @@ func (p *ParallelStateProcessor) prepareExecResult(block *types.Block, allStateR
 	}
 
 	if err := postTxState.BlockAccessList().ValidateStateReads(*allStateReads); err != nil {
-		fmt.Printf("block tx count is %d\n", len(block.Transactions()))
-		fmt.Printf("error: %v. computed state reads: %v.\nbal is\n%s\n", err, *allStateReads, block.Body().AccessList)
 		return &ProcessResultWithMetrics{
 			ProcessResult: &ProcessResult{Error: err},
 		}
@@ -296,7 +294,6 @@ func (p *ParallelStateProcessor) execTx(block *types.Block, tx *types.Transactio
 // Process performs EVM execution and state root computation for a block which is known
 // to contain an access list.
 func (p *ParallelStateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (*ProcessResultWithMetrics, error) {
-	fmt.Println("start parallel process")
 	var (
 		header = block.Header()
 		resCh  = make(chan *ProcessResultWithMetrics)
@@ -330,20 +327,16 @@ func (p *ParallelStateProcessor) Process(block *types.Block, statedb *state.Stat
 	evm := vm.NewEVM(context, tracingStateDB, p.config, cfg)
 
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
-		fmt.Printf("process beacon block root")
 		ProcessBeaconBlockRoot(*beaconRoot, evm)
 	}
 	if p.config.IsPrague(block.Number(), block.Time()) || p.config.IsVerkle(block.Number(), block.Time()) {
-		fmt.Printf("process parent block hash")
 		ProcessParentBlockHash(block.ParentHash(), evm)
 	}
 
 	// TODO: weird that I have to manually call finalize here
-	fmt.Println("HERE")
 	balTracer.OnPreTxExecutionDone()
 
 	diff, stateReads := balTracer.IdxChanges()
-	fmt.Printf("idx changes are\n%s\n", diff.String())
 	if err := statedb.BlockAccessList().ValidateStateDiff(0, diff); err != nil {
 		return nil, err
 	}

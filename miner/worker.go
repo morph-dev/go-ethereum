@@ -270,15 +270,12 @@ func (miner *Miner) prepareWork(genParams *generateParams, witness bool) (*envir
 		return nil, err
 	}
 	if header.ParentBeaconRoot != nil {
-		fmt.Printf("miner process parent block root: %x\n", *header.ParentBeaconRoot)
 		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, env.evm)
 	}
 	if miner.chainConfig.IsPrague(header.Number, header.Time) {
-		fmt.Printf("miner process parent block hash: %x\n", header.ParentHash)
 		core.ProcessParentBlockHash(header.ParentHash, env.evm)
 	}
 	if miner.chainConfig.IsAmsterdam(header.Number, header.Time) {
-		fmt.Println("miner foobar")
 		env.alTracer.OnPreTxExecutionDone()
 	}
 	return env, nil
