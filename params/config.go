@@ -448,17 +448,18 @@ type ChainConfig struct {
 
 	// Fork scheduling was switched from blocks to timestamps here
 
-	ShanghaiTime  *uint64 `json:"shanghaiTime,omitempty"`  // Shanghai switch time (nil = no fork, 0 = already on shanghai)
-	CancunTime    *uint64 `json:"cancunTime,omitempty"`    // Cancun switch time (nil = no fork, 0 = already on cancun)
-	PragueTime    *uint64 `json:"pragueTime,omitempty"`    // Prague switch time (nil = no fork, 0 = already on prague)
-	OsakaTime     *uint64 `json:"osakaTime,omitempty"`     // Osaka switch time (nil = no fork, 0 = already on osaka)
-	BPO1Time      *uint64 `json:"bpo1Time,omitempty"`      // BPO1 switch time (nil = no fork, 0 = already on bpo1)
-	BPO2Time      *uint64 `json:"bpo2Time,omitempty"`      // BPO2 switch time (nil = no fork, 0 = already on bpo2)
-	BPO3Time      *uint64 `json:"bpo3Time,omitempty"`      // BPO3 switch time (nil = no fork, 0 = already on bpo3)
-	BPO4Time      *uint64 `json:"bpo4Time,omitempty"`      // BPO4 switch time (nil = no fork, 0 = already on bpo4)
-	BPO5Time      *uint64 `json:"bpo5Time,omitempty"`      // BPO5 switch time (nil = no fork, 0 = already on bpo5)
-	AmsterdamTime *uint64 `json:"amsterdamTime,omitempty"` // Amsterdam switch time (nil = no fork, 0 = already on amsterdam)
-	VerkleTime    *uint64 `json:"verkleTime,omitempty"`    // Verkle switch time (nil = no fork, 0 = already on verkle)
+	ShanghaiTime    *uint64 `json:"shanghaiTime,omitempty"`    // Shanghai switch time (nil = no fork, 0 = already on shanghai)
+	CancunTime      *uint64 `json:"cancunTime,omitempty"`      // Cancun switch time (nil = no fork, 0 = already on cancun)
+	PragueTime      *uint64 `json:"pragueTime,omitempty"`      // Prague switch time (nil = no fork, 0 = already on prague)
+	OsakaTime       *uint64 `json:"osakaTime,omitempty"`       // Osaka switch time (nil = no fork, 0 = already on osaka)
+	BPO1Time        *uint64 `json:"bpo1Time,omitempty"`        // BPO1 switch time (nil = no fork, 0 = already on bpo1)
+	BPO2Time        *uint64 `json:"bpo2Time,omitempty"`        // BPO2 switch time (nil = no fork, 0 = already on bpo2)
+	BPO3Time        *uint64 `json:"bpo3Time,omitempty"`        // BPO3 switch time (nil = no fork, 0 = already on bpo3)
+	BPO4Time        *uint64 `json:"bpo4Time,omitempty"`        // BPO4 switch time (nil = no fork, 0 = already on bpo4)
+	BPO5Time        *uint64 `json:"bpo5Time,omitempty"`        // BPO5 switch time (nil = no fork, 0 = already on bpo5)
+	AmsterdamTime   *uint64 `json:"amsterdamTime,omitempty"`   // Amsterdam switch time (nil = no fork, 0 = already on amsterdam)
+	PrototypingTime *uint64 `json:"prototypingTime,omitempty"` // Prototyping switch time (nil = no fork, 0 = already on prototyping)
+	VerkleTime      *uint64 `json:"verkleTime,omitempty"`      // Verkle switch time (nil = no fork, 0 = already on verkle)
 
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
@@ -594,6 +595,9 @@ func (c *ChainConfig) Description() string {
 	if c.AmsterdamTime != nil {
 		banner += fmt.Sprintf(" - Amsterdam:									 @%-10v\n", *c.AmsterdamTime)
 	}
+	if c.PrototypingTime != nil {
+		banner += fmt.Sprintf(" - Prototyping:                 @%-10v\n", *c.PrototypingTime)
+	}
 	if c.VerkleTime != nil {
 		banner += fmt.Sprintf(" - Verkle:                      @%-10v\n", *c.VerkleTime)
 	}
@@ -609,16 +613,17 @@ type BlobConfig struct {
 
 // BlobScheduleConfig determines target and max number of blobs allow per fork.
 type BlobScheduleConfig struct {
-	Cancun    *BlobConfig `json:"cancun,omitempty"`
-	Prague    *BlobConfig `json:"prague,omitempty"`
-	Osaka     *BlobConfig `json:"osaka,omitempty"`
-	Verkle    *BlobConfig `json:"verkle,omitempty"`
-	BPO1      *BlobConfig `json:"bpo1,omitempty"`
-	BPO2      *BlobConfig `json:"bpo2,omitempty"`
-	BPO3      *BlobConfig `json:"bpo3,omitempty"`
-	BPO4      *BlobConfig `json:"bpo4,omitempty"`
-	BPO5      *BlobConfig `json:"bpo5,omitempty"`
-	Amsterdam *BlobConfig `json:"amsterdam,omitempty"`
+	Cancun      *BlobConfig `json:"cancun,omitempty"`
+	Prague      *BlobConfig `json:"prague,omitempty"`
+	Osaka       *BlobConfig `json:"osaka,omitempty"`
+	Verkle      *BlobConfig `json:"verkle,omitempty"`
+	BPO1        *BlobConfig `json:"bpo1,omitempty"`
+	BPO2        *BlobConfig `json:"bpo2,omitempty"`
+	BPO3        *BlobConfig `json:"bpo3,omitempty"`
+	BPO4        *BlobConfig `json:"bpo4,omitempty"`
+	BPO5        *BlobConfig `json:"bpo5,omitempty"`
+	Amsterdam   *BlobConfig `json:"amsterdam,omitempty"`
+	Prototyping *BlobConfig `json:"prototyping,omitempty"`
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.
@@ -761,6 +766,11 @@ func (c *ChainConfig) IsAmsterdam(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.AmsterdamTime, time)
 }
 
+// IsPrototyping returns whether time is either equal to the Prototyping fork time or greater.
+func (c *ChainConfig) IsPrototyping(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.PrototypingTime, time)
+}
+
 // IsVerkle returns whether time is either equal to the Verkle fork time or greater.
 func (c *ChainConfig) IsVerkle(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.VerkleTime, time)
@@ -847,6 +857,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "bpo4", timestamp: c.BPO4Time, optional: true},
 		{name: "bpo5", timestamp: c.BPO5Time, optional: true},
 		{name: "amsterdam", timestamp: c.AmsterdamTime, optional: true},
+		{name: "prototyping", timestamp: c.PrototypingTime, optional: true},
 	} {
 		if lastFork.name != "" {
 			switch {
@@ -902,6 +913,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "bpo4", timestamp: c.BPO4Time, config: bsc.BPO4},
 		{name: "bpo5", timestamp: c.BPO5Time, config: bsc.BPO5},
 		{name: "amsterdam", timestamp: c.AmsterdamTime, config: bsc.Amsterdam},
+		{name: "prototyping", timestamp: c.PrototypingTime, config: bsc.Prototyping},
 	} {
 		if cur.config != nil {
 			if err := cur.config.validate(); err != nil {
@@ -910,11 +922,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		}
 		if cur.timestamp != nil {
 			// If the fork is configured, a blob schedule must be defined for it.
-			/*
-				if cur.config == nil {
-					return fmt.Errorf("invalid chain configuration: missing entry for fork %q in blobSchedule", cur.name)
-				}
-			*/
+			if cur.config == nil {
+				return fmt.Errorf("invalid chain configuration: missing entry for fork %q in blobSchedule", cur.name)
+			}
 		}
 	}
 	return nil
@@ -1022,6 +1032,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkTimestampIncompatible(c.AmsterdamTime, newcfg.AmsterdamTime, headTimestamp) {
 		return newTimestampCompatError("Amsterdam fork timestamp", c.AmsterdamTime, newcfg.AmsterdamTime)
 	}
+	if isForkTimestampIncompatible(c.PrototypingTime, newcfg.PrototypingTime, headTimestamp) {
+		return newTimestampCompatError("Prototyping fork timestamp", c.PrototypingTime, newcfg.PrototypingTime)
+	}
 	return nil
 }
 
@@ -1041,6 +1054,8 @@ func (c *ChainConfig) LatestFork(time uint64) forks.Fork {
 	london := c.LondonBlock
 
 	switch {
+	case c.IsPrototyping(london, time):
+		return forks.Prototyping
 	case c.IsAmsterdam(london, time):
 		return forks.Amsterdam
 	case c.IsBPO5(london, time):
@@ -1069,9 +1084,10 @@ func (c *ChainConfig) LatestFork(time uint64) forks.Fork {
 // BlobConfig returns the blob config associated with the provided fork.
 func (c *ChainConfig) BlobConfig(fork forks.Fork) *BlobConfig {
 	switch fork {
+	case forks.Prototyping:
+		return c.BlobScheduleConfig.Prototyping
 	case forks.Amsterdam:
-		// TODO: (????)
-		return c.BlobScheduleConfig.BPO2
+		return c.BlobScheduleConfig.Amsterdam
 	case forks.BPO5:
 		return c.BlobScheduleConfig.BPO5
 	case forks.BPO4:
@@ -1117,6 +1133,8 @@ func (c *ChainConfig) ActiveSystemContracts(time uint64) map[string]common.Addre
 // the fork isn't defined or isn't a time-based fork.
 func (c *ChainConfig) Timestamp(fork forks.Fork) *uint64 {
 	switch {
+	case fork == forks.Prototyping:
+		return c.PrototypingTime
 	case fork == forks.Amsterdam:
 		return c.AmsterdamTime
 	case fork == forks.BPO5:
@@ -1283,7 +1301,7 @@ type Rules struct {
 	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
 	IsBerlin, IsLondon                                      bool
 	IsMerge, IsShanghai, IsCancun, IsPrague, IsOsaka        bool
-	IsAmsterdam, IsVerkle                                   bool
+	IsAmsterdam, IsPrototyping, IsVerkle                    bool
 }
 
 // Rules ensures c's ChainID is not nil.
@@ -1314,6 +1332,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsPrague:         isMerge && c.IsPrague(num, timestamp),
 		IsOsaka:          isMerge && c.IsOsaka(num, timestamp),
 		IsAmsterdam:      isMerge && c.IsAmsterdam(num, timestamp),
+		IsPrototyping:    isMerge && c.IsPrototyping(num, timestamp),
 		IsVerkle:         isVerkle,
 		IsEIP4762:        isVerkle,
 	}

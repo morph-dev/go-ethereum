@@ -250,11 +250,11 @@ func (api *ConsensusAPI) ForkchoiceUpdatedV3(update engine.ForkchoiceStateV1, pa
 			return engine.STATUS_INVALID, attributesErr("missing withdrawals")
 		case params.BeaconRoot == nil:
 			return engine.STATUS_INVALID, attributesErr("missing beacon root")
-		case !api.checkFork(params.Timestamp, forks.Cancun, forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2, forks.BPO3, forks.BPO4, forks.BPO5, forks.Amsterdam):
-			return engine.STATUS_INVALID, unsupportedForkErr("fcuV3 must only be called for cancun/prague/osaka payloads")
+		case !api.checkFork(params.Timestamp, forks.Cancun, forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2, forks.BPO3, forks.BPO4, forks.BPO5, forks.Amsterdam, forks.Prototyping):
+			return engine.STATUS_INVALID, unsupportedForkErr("fcuV3 must only be called for cancun/prague/osaka/bpo*/amsterdam/prototyping payloads")
 		}
 
-		if api.checkFork(params.Timestamp, forks.Amsterdam) {
+		if api.checkFork(params.Timestamp, forks.Amsterdam, forks.Prototyping) {
 			return api.forkchoiceUpdated(update, params, engine.PayloadV4, false)
 		}
 	}
@@ -732,8 +732,8 @@ func (api *ConsensusAPI) NewPayloadV5(params engine.ExecutableData, versionedHas
 		return invalidStatus, paramsErr("nil executionRequests post-prague")
 	case params.BlockAccessList == nil:
 		return invalidStatus, paramsErr("nil block access list post-amsterdam")
-	case !api.checkFork(params.Timestamp, forks.Prague, forks.Osaka, forks.Amsterdam):
-		return invalidStatus, unsupportedForkErr("newPayloadV5 must only be called for amsterdam payloads")
+	case !api.checkFork(params.Timestamp, forks.Amsterdam, forks.Prototyping):
+		return invalidStatus, unsupportedForkErr("newPayloadV5 must only be called for amsterdam/prototyping payloads")
 	}
 	requests := convertRequests(executionRequests)
 	if err := validateRequests(requests); err != nil {
