@@ -3,6 +3,7 @@ package bal
 import (
 	"encoding/json"
 	"fmt"
+
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rlp"
 )
@@ -11,8 +12,8 @@ func (c *ContractCode) MarshalJSON() ([]byte, error) {
 	hexStr := fmt.Sprintf("%x", *c)
 	return json.Marshal(hexStr)
 }
-func (e encodingBalanceChange) MarshalJSON() ([]byte, error) {
-	type Alias encodingBalanceChange
+func (e EncodingBalanceChange) MarshalJSON() ([]byte, error) {
+	type Alias EncodingBalanceChange
 	return json.Marshal(&struct {
 		TxIdx string `json:"txIndex"`
 		*Alias
@@ -22,8 +23,8 @@ func (e encodingBalanceChange) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (e *encodingBalanceChange) UnmarshalJSON(data []byte) error {
-	type Alias encodingBalanceChange
+func (e *EncodingBalanceChange) UnmarshalJSON(data []byte) error {
+	type Alias EncodingBalanceChange
 	aux := &struct {
 		TxIdx string `json:"txIndex"`
 		*Alias
@@ -40,8 +41,8 @@ func (e *encodingBalanceChange) UnmarshalJSON(data []byte) error {
 	}
 	return nil
 }
-func (e encodingAccountNonce) MarshalJSON() ([]byte, error) {
-	type Alias encodingAccountNonce
+func (e EncodingAccountNonce) MarshalJSON() ([]byte, error) {
+	type Alias EncodingAccountNonce
 	return json.Marshal(&struct {
 		TxIdx string `json:"txIndex"`
 		Nonce string `json:"nonce"`
@@ -53,8 +54,8 @@ func (e encodingAccountNonce) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (e *encodingAccountNonce) UnmarshalJSON(data []byte) error {
-	type Alias encodingAccountNonce
+func (e *EncodingAccountNonce) UnmarshalJSON(data []byte) error {
+	type Alias EncodingAccountNonce
 	aux := &struct {
 		TxIdx string `json:"txIndex"`
 		Nonce string `json:"nonce"`

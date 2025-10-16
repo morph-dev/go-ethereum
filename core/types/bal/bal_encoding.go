@@ -41,6 +41,8 @@ import (
 // BlockAccessList is the encoding format of ConstructionBlockAccessList.
 type BlockAccessList []AccountAccess
 
+type ChunkAccessList []AccountAccess
+
 func (e BlockAccessList) EncodeRLP(_w io.Writer) error {
 	w := rlp.NewEncoderBuffer(_w)
 	l := w.List()
@@ -106,34 +108,34 @@ func (e *BlockAccessList) Hash() common.Hash {
 	return crypto.Keccak256Hash(enc.Bytes())
 }
 
-// encodingBalanceChange is the encoding format of BalanceChange.
-type encodingBalanceChange struct {
+// EncodingBalanceChange is the encoding format of BalanceChange.
+type EncodingBalanceChange struct {
 	TxIdx   uint16       `json:"txIndex"`
 	Balance *uint256.Int `json:"balance"`
 }
 
-// encodingAccountNonce is the encoding format of NonceChange.
-type encodingAccountNonce struct {
+// EncodingAccountNonce is the encoding format of NonceChange.
+type EncodingAccountNonce struct {
 	TxIdx uint16 `json:"txIndex"`
 	Nonce uint64 `json:"nonce"`
 }
 
-// encodingStorageWrite is the encoding format of StorageWrites.
-type encodingStorageWrite struct {
+// EncodingStorageWrite is the encoding format of StorageWrites.
+type EncodingStorageWrite struct {
 	TxIdx      uint16      `json:"txIndex"`
 	ValueAfter common.Hash `json:"valueAfter"`
 }
 
-// encodingStorageWrite is the encoding format of SlotWrites.
-type encodingSlotWrites struct {
+// EncodingSlotWrites is the encoding format of SlotWrites.
+type EncodingSlotWrites struct {
 	Slot     common.Hash            `json:"slot"`
-	Accesses []encodingStorageWrite `json:"accesses"`
+	Accesses []EncodingStorageWrite `json:"accesses"`
 }
 
 // validate returns an instance of the encoding-representation slot writes in
 // working representation.
-func (e *encodingSlotWrites) validate() error {
-	if slices.IsSortedFunc(e.Accesses, func(a, b encodingStorageWrite) int {
+func (e *EncodingSlotWrites) validate() error {
+	if slices.IsSortedFunc(e.Accesses, func(a, b EncodingStorageWrite) int {
 		return cmp.Compare[uint16](a.TxIdx, b.TxIdx)
 	}) {
 		return nil
@@ -144,10 +146,10 @@ func (e *encodingSlotWrites) validate() error {
 // AccountAccess is the encoding format of ConstructionAccountAccesses.
 type AccountAccess struct {
 	Address        common.Address          `json:"address,omitempty"`        // 20-byte Ethereum address
-	StorageChanges []encodingSlotWrites    `json:"storageChanges,omitempty"` // Storage changes (slot -> [tx_index -> new_value])
+	StorageChanges []EncodingSlotWrites    `json:"storageChanges,omitempty"` // Storage changes (slot -> [tx_index -> new_value])
 	StorageReads   []common.Hash           `json:"storageReads,omitempty"`   // Read-only storage keys
-	BalanceChanges []encodingBalanceChange `json:"balanceChanges,omitempty"` // Balance changes ([tx_index -> post_balance])
-	NonceChanges   []encodingAccountNonce  `json:"nonceChanges,omitempty"`   // Nonce changes ([tx_index -> new_nonce])
+	BalanceChanges []EncodingBalanceChange `json:"balanceChanges,omitempty"` // Balance changes ([tx_index -> post_balance])
+	NonceChanges   []EncodingAccountNonce  `json:"nonceChanges,omitempty"`   // Nonce changes ([tx_index -> new_nonce])
 	CodeChanges    []CodeChange            `json:"code,omitempty"`           // CodeChanges changes ([tx_index -> new_code])
 }
 
@@ -156,7 +158,7 @@ type AccountAccess struct {
 // spec, an error is returned.
 func (e *AccountAccess) validate() error {
 	// Check the storage write slots are sorted in order
-	if !slices.IsSortedFunc(e.StorageChanges, func(a, b encodingSlotWrites) int {
+	if !slices.IsSortedFunc(e.StorageChanges, func(a, b EncodingSlotWrites) int {
 		return bytes.Compare(a.Slot[:], b.Slot[:])
 	}) {
 		return errors.New("storage writes slots not in lexicographic order")
@@ -198,14 +200,14 @@ func (e *AccountAccess) validate() error {
 	}
 
 	// Check the balance changes are sorted in order
-	if !slices.IsSortedFunc(e.BalanceChanges, func(a, b encodingBalanceChange) int {
+	if !slices.IsSortedFunc(e.BalanceChanges, func(a, b EncodingBalanceChange) int {
 		return cmp.Compare[uint16](a.TxIdx, b.TxIdx)
 	}) {
 		return errors.New("balance changes not in ascending order by tx index")
 	}
 
 	// Check the nonce changes are sorted in order
-	if !slices.IsSortedFunc(e.NonceChanges, func(a, b encodingAccountNonce) int {
+	if !slices.IsSortedFunc(e.NonceChanges, func(a, b EncodingAccountNonce) int {
 		return cmp.Compare[uint16](a.TxIdx, b.TxIdx)
 	}) {
 		return errors.New("nonce changes not in ascending order by tx index")
@@ -229,7 +231,7 @@ func (e *AccountAccess) Copy() AccountAccess {
 		NonceChanges:   slices.Clone(e.NonceChanges),
 	}
 	for _, storageWrite := range e.StorageChanges {
-		res.StorageChanges = append(res.StorageChanges, encodingSlotWrites{
+		res.StorageChanges = append(res.StorageChanges, EncodingSlotWrites{
 			Slot:     storageWrite.Slot,
 			Accesses: slices.Clone(storageWrite.Accesses),
 		})
@@ -256,10 +258,10 @@ var _ rlp.Encoder = &ConstructionBlockAccessList{}
 func (a *ConstructionAccountAccesses) toEncodingObj(addr common.Address) AccountAccess {
 	res := AccountAccess{
 		Address:        addr,
-		StorageChanges: make([]encodingSlotWrites, 0),
+		StorageChanges: make([]EncodingSlotWrites, 0),
 		StorageReads:   make([]common.Hash, 0),
-		BalanceChanges: make([]encodingBalanceChange, 0),
-		NonceChanges:   make([]encodingAccountNonce, 0),
+		BalanceChanges: make([]EncodingBalanceChange, 0),
+		NonceChanges:   make([]EncodingAccountNonce, 0),
 		CodeChanges:    make([]CodeChange, 0),
 	}
 
@@ -267,16 +269,16 @@ func (a *ConstructionAccountAccesses) toEncodingObj(addr common.Address) Account
 	writeSlots := slices.Collect(maps.Keys(a.StorageWrites))
 	slices.SortFunc(writeSlots, common.Hash.Cmp)
 	for _, slot := range writeSlots {
-		var obj encodingSlotWrites
+		var obj EncodingSlotWrites
 		obj.Slot = slot
 
 		slotWrites := a.StorageWrites[slot]
-		obj.Accesses = make([]encodingStorageWrite, 0, len(slotWrites))
+		obj.Accesses = make([]EncodingStorageWrite, 0, len(slotWrites))
 
 		indices := slices.Collect(maps.Keys(slotWrites))
 		slices.SortFunc(indices, cmp.Compare[uint16])
 		for _, index := range indices {
-			obj.Accesses = append(obj.Accesses, encodingStorageWrite{
+			obj.Accesses = append(obj.Accesses, EncodingStorageWrite{
 				TxIdx:      index,
 				ValueAfter: slotWrites[index],
 			})
@@ -295,7 +297,7 @@ func (a *ConstructionAccountAccesses) toEncodingObj(addr common.Address) Account
 	balanceIndices := slices.Collect(maps.Keys(a.BalanceChanges))
 	slices.SortFunc(balanceIndices, cmp.Compare[uint16])
 	for _, idx := range balanceIndices {
-		res.BalanceChanges = append(res.BalanceChanges, encodingBalanceChange{
+		res.BalanceChanges = append(res.BalanceChanges, EncodingBalanceChange{
 			TxIdx:   idx,
 			Balance: new(uint256.Int).Set(a.BalanceChanges[idx]),
 		})
@@ -305,7 +307,7 @@ func (a *ConstructionAccountAccesses) toEncodingObj(addr common.Address) Account
 	nonceIndices := slices.Collect(maps.Keys(a.NonceChanges))
 	slices.SortFunc(nonceIndices, cmp.Compare[uint16])
 	for _, idx := range nonceIndices {
-		res.NonceChanges = append(res.NonceChanges, encodingAccountNonce{
+		res.NonceChanges = append(res.NonceChanges, EncodingAccountNonce{
 			TxIdx: idx,
 			Nonce: a.NonceChanges[idx],
 		})

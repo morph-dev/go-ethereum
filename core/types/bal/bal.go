@@ -19,10 +19,11 @@ package bal
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
-	"maps"
 )
 
 /*
@@ -508,14 +509,12 @@ func NewConstructionAccountAccesses() *ConstructionAccountAccesses {
 // in execution (account addresses and storage keys).
 type ConstructionBlockAccessList struct {
 	Accounts map[common.Address]*ConstructionAccountAccesses
-	curIdx   uint16
 }
 
 // NewConstructionBlockAccessList instantiates an empty access list.
 func NewConstructionBlockAccessList() *ConstructionBlockAccessList {
 	return &ConstructionBlockAccessList{
 		make(map[common.Address]*ConstructionAccountAccesses),
-		0,
 	}
 }
 

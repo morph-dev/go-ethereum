@@ -76,12 +76,12 @@ func (obj *AccountAccess) DecodeRLP(dec *rlp.Stream) error {
 		}
 		_tmp0.Address = _tmp1
 		// StorageChanges:
-		var _tmp2 []encodingSlotWrites
+		var _tmp2 []EncodingSlotWrites
 		if _, err := dec.List(); err != nil {
 			return err
 		}
 		for dec.MoreDataInList() {
-			var _tmp3 encodingSlotWrites
+			var _tmp3 EncodingSlotWrites
 			{
 				if _, err := dec.List(); err != nil {
 					return err
@@ -93,12 +93,12 @@ func (obj *AccountAccess) DecodeRLP(dec *rlp.Stream) error {
 				}
 				_tmp3.Slot = _tmp4
 				// Accesses:
-				var _tmp5 []encodingStorageWrite
+				var _tmp5 []EncodingStorageWrite
 				if _, err := dec.List(); err != nil {
 					return err
 				}
 				for dec.MoreDataInList() {
-					var _tmp6 encodingStorageWrite
+					var _tmp6 EncodingStorageWrite
 					{
 						if _, err := dec.List(); err != nil {
 							return err
@@ -152,12 +152,12 @@ func (obj *AccountAccess) DecodeRLP(dec *rlp.Stream) error {
 		}
 		_tmp0.StorageReads = _tmp9
 		// BalanceChanges:
-		var _tmp11 []encodingBalanceChange
+		var _tmp11 []EncodingBalanceChange
 		if _, err := dec.List(); err != nil {
 			return err
 		}
 		for dec.MoreDataInList() {
-			var _tmp12 encodingBalanceChange
+			var _tmp12 EncodingBalanceChange
 			{
 				if _, err := dec.List(); err != nil {
 					return err
@@ -185,12 +185,12 @@ func (obj *AccountAccess) DecodeRLP(dec *rlp.Stream) error {
 		}
 		_tmp0.BalanceChanges = _tmp11
 		// NonceChanges:
-		var _tmp15 []encodingAccountNonce
+		var _tmp15 []EncodingAccountNonce
 		if _, err := dec.List(); err != nil {
 			return err
 		}
 		for dec.MoreDataInList() {
-			var _tmp16 encodingAccountNonce
+			var _tmp16 EncodingAccountNonce
 			{
 				if _, err := dec.List(); err != nil {
 					return err

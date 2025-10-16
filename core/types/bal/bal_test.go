@@ -112,30 +112,30 @@ func TestBALEncoding(t *testing.T) {
 
 func makeTestAccountAccess(sort bool) AccountAccess {
 	var (
-		storageWrites []encodingSlotWrites
+		storageWrites []EncodingSlotWrites
 		storageReads  []common.Hash
-		balances      []encodingBalanceChange
-		nonces        []encodingAccountNonce
+		balances      []EncodingBalanceChange
+		nonces        []EncodingAccountNonce
 	)
 	for i := 0; i < 5; i++ {
-		slot := encodingSlotWrites{
+		slot := EncodingSlotWrites{
 			Slot: testrand.Hash(),
 		}
 		for j := 0; j < 3; j++ {
-			slot.Accesses = append(slot.Accesses, encodingStorageWrite{
+			slot.Accesses = append(slot.Accesses, EncodingStorageWrite{
 				TxIdx:      uint16(2 * j),
 				ValueAfter: testrand.Hash(),
 			})
 		}
 		if sort {
-			slices.SortFunc(slot.Accesses, func(a, b encodingStorageWrite) int {
+			slices.SortFunc(slot.Accesses, func(a, b EncodingStorageWrite) int {
 				return cmp.Compare[uint16](a.TxIdx, b.TxIdx)
 			})
 		}
 		storageWrites = append(storageWrites, slot)
 	}
 	if sort {
-		slices.SortFunc(storageWrites, func(a, b encodingSlotWrites) int {
+		slices.SortFunc(storageWrites, func(a, b EncodingSlotWrites) int {
 			return bytes.Compare(a.Slot[:], b.Slot[:])
 		})
 	}
@@ -150,25 +150,25 @@ func makeTestAccountAccess(sort bool) AccountAccess {
 	}
 
 	for i := 0; i < 5; i++ {
-		balances = append(balances, encodingBalanceChange{
+		balances = append(balances, EncodingBalanceChange{
 			TxIdx:   uint16(2 * i),
 			Balance: new(uint256.Int).SetBytes(testrand.Bytes(32)),
 		})
 	}
 	if sort {
-		slices.SortFunc(balances, func(a, b encodingBalanceChange) int {
+		slices.SortFunc(balances, func(a, b EncodingBalanceChange) int {
 			return cmp.Compare[uint16](a.TxIdx, b.TxIdx)
 		})
 	}
 
 	for i := 0; i < 5; i++ {
-		nonces = append(nonces, encodingAccountNonce{
+		nonces = append(nonces, EncodingAccountNonce{
 			TxIdx: uint16(2 * i),
 			Nonce: uint64(i + 100),
 		})
 	}
 	if sort {
-		slices.SortFunc(nonces, func(a, b encodingAccountNonce) int {
+		slices.SortFunc(nonces, func(a, b EncodingAccountNonce) int {
 			return cmp.Compare[uint16](a.TxIdx, b.TxIdx)
 		})
 	}
