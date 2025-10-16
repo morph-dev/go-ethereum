@@ -30,6 +30,9 @@ const (
 
 	MaxTxGas uint64 = 1 << 24 // Maximum transaction gas limit after eip-7825 (16,777,216).
 
+	MaxChunksPerBlock uint   = 16
+	ChunkMaxGas       uint64 = 1 << 24 // Must be at least MaxTxGas
+
 	MaximumExtraDataSize  uint64 = 32    // Maximum size extra data may be after Genesis.
 	ExpByteGas            uint64 = 10    // Times ceil(log256(exponent)) for the EXP instruction.
 	SloadGas              uint64 = 50    // Multiplied by the number of 32-byte words that are copied (round up) for any *COPY operation and added.
