@@ -254,8 +254,11 @@ func (api *ConsensusAPI) ForkchoiceUpdatedV3(update engine.ForkchoiceStateV1, pa
 			return engine.STATUS_INVALID, unsupportedForkErr("fcuV3 must only be called for cancun/prague/osaka/bpo*/amsterdam/prototyping payloads")
 		}
 
-		if api.checkFork(params.Timestamp, forks.Amsterdam, forks.Prototyping) {
+		if api.checkFork(params.Timestamp, forks.Amsterdam) {
 			return api.forkchoiceUpdated(update, params, engine.PayloadV4, false)
+		}
+		if api.checkFork(params.Timestamp, forks.Prototyping) {
+			return api.forkchoiceUpdated(update, params, engine.PayloadV5, false)
 		}
 	}
 	// TODO(matt): the spec requires that fcu is applied when called on a valid
@@ -505,6 +508,14 @@ func (api *ConsensusAPI) GetPayloadV5(payloadID engine.PayloadID) (*engine.Execu
 // GetPayloadV6 returns a cached payload by id.
 func (api *ConsensusAPI) GetPayloadV6(payloadID engine.PayloadID) (*engine.ExecutionPayloadEnvelope, error) {
 	if !payloadID.Is(engine.PayloadV4) {
+		return nil, engine.UnsupportedFork
+	}
+	return api.getPayload(payloadID, false)
+}
+
+// GetPayloadV6 returns a cached payload by id.
+func (api *ConsensusAPI) GetPayloadV7(payloadID engine.PayloadID) (*engine.ExecutionPayloadEnvelope, error) {
+	if !payloadID.Is(engine.PayloadV5) {
 		return nil, engine.UnsupportedFork
 	}
 	return api.getPayload(payloadID, false)

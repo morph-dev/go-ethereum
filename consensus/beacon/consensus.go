@@ -415,7 +415,6 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 			}
 		}
 	}
-
 	return block, nil
 }
 

@@ -190,6 +190,7 @@ type Body struct {
 	Uncles       []*Header
 	Withdrawals  []*Withdrawal        `rlp:"optional"`
 	AccessList   *bal.BlockAccessList `rlp:"optional,nil"`
+	Chunks       Chunks               `rlp:"optional,nil"`
 }
 
 // Block represents an Ethereum block.
@@ -221,6 +222,7 @@ type Block struct {
 	witness *ExecutionWitness
 
 	accessList *bal.BlockAccessList
+	chunks     Chunks
 
 	// caches
 	hash atomic.Pointer[common.Hash]
@@ -305,6 +307,10 @@ func NewBlock(header *Header, body *Body, receipts []*Receipt, hasher TrieHasher
 		b.accessList = body.AccessList
 	}
 
+	if body.Chunks != nil {
+		b.chunks = body.Chunks
+	}
+
 	return b
 }
 
@@ -375,7 +381,7 @@ func (b *Block) EncodeRLP(w io.Writer) error {
 // Body returns the non-header content of the block.
 // Note the returned data is not an independent copy.
 func (b *Block) Body() *Body {
-	return &Body{b.transactions, b.uncles, b.withdrawals, b.accessList}
+	return &Body{b.transactions, b.uncles, b.withdrawals, b.accessList, b.chunks}
 }
 
 // Accessors for body data. These do not return a copy because the content
@@ -449,6 +455,8 @@ func (b *Block) BlobGasUsed() *uint64 {
 
 // ExecutionWitness returns the verkle execution witneess + proof for a block
 func (b *Block) ExecutionWitness() *ExecutionWitness { return b.witness }
+
+func (b *Block) Chunks() Chunks { return b.chunks }
 
 // Size returns the true RLP encoded storage size of the block, either by encoding
 // and returning it, or returning a previously cached value.
@@ -530,6 +538,9 @@ func (b *Block) WithBody(body Body) *Block {
 		balCopy := body.AccessList.Copy()
 		block.accessList = &balCopy
 	}
+	if body.Chunks != nil {
+		block.chunks = slices.Clone(body.Chunks)
+	}
 	for i := range body.Uncles {
 		block.uncles[i] = CopyHeader(body.Uncles[i])
 	}
@@ -543,6 +554,7 @@ func (b *Block) WithWitness(witness *ExecutionWitness) *Block {
 		uncles:       b.uncles,
 		withdrawals:  b.withdrawals,
 		accessList:   b.accessList,
+		chunks:       b.chunks,
 		witness:      witness,
 	}
 }

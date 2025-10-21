@@ -19,10 +19,12 @@ package miner
 import (
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/tracing"
 	"math/big"
 	"sync/atomic"
 	"time"
+
+	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/trie"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
@@ -144,10 +146,11 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 	for _, r := range work.receipts {
 		allLogs = append(allLogs, r.Logs...)
 	}
+	header := work.header
 
 	// Collect consensus-layer requests if Prague is enabled.
 	var requests [][]byte
-	if miner.chainConfig.IsPrague(work.header.Number, work.header.Time) {
+	if miner.chainConfig.IsPrague(header.Number, header.Time) {
 		requests = [][]byte{}
 		// EIP-6110 deposits
 		if err := core.ParseDepositLogs(&requests, allLogs, miner.chainConfig); err != nil {
@@ -164,7 +167,7 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 	}
 	if requests != nil {
 		reqHash := types.CalcRequestsHash(requests)
-		work.header.RequestsHash = &reqHash
+		header.RequestsHash = &reqHash
 	}
 
 	// set the block access list on the body after the block has finished executing
@@ -174,13 +177,32 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 	// however, the BAL tracer instance is used once per block, while the engine object
 	// lives for the entire time the client is running.
 	onBlockFinalization := func() {
-		if miner.chainConfig.IsAmsterdam(work.header.Number, work.header.Time) {
+		if miner.chainConfig.IsAmsterdam(header.Number, header.Time) {
 			work.alTracer.OnBlockFinalization()
 			body.AccessList = work.alTracer.AccessList().ToEncodingObj()
 		}
+
+		if miner.chainConfig.IsPrototyping(header.Number, header.Time) {
+			blockMetadata := types.BlockMetadata{
+				ParentHash:       header.ParentHash,
+				Number:           header.Number.Uint64(),
+				Timestamp:        header.Time,
+				MixHash:          header.MixDigest,
+				BaseFeePerGas:    *header.BaseFee,
+				ParentBeaconRoot: *header.ParentBeaconRoot,
+			}
+			body.Chunks = types.CreateChunks(
+				&blockMetadata,
+				body.Transactions,
+				work.receipts,
+				body.Withdrawals,
+				*body.AccessList,
+				trie.NewStackTrie(nil),
+			)
+		}
 	}
 
-	block, err := miner.engine.FinalizeAndAssemble(miner.chain, work.header, work.state, &body, work.receipts, onBlockFinalization)
+	block, err := miner.engine.FinalizeAndAssemble(miner.chain, header, work.state, &body, work.receipts, onBlockFinalization)
 	if err != nil {
 		return &newPayloadResult{err: err}
 	}

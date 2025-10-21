@@ -18,13 +18,13 @@ package engine
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/types/bal"
 	"math/big"
 	"slices"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
 )
@@ -52,6 +52,7 @@ var (
 	// fields: blobGasUsed and excessBlobGas.
 	PayloadV3 PayloadVersion = 0x3
 	PayloadV4 PayloadVersion = 0x4
+	PayloadV5 PayloadVersion = 0x5
 )
 
 //go:generate go run github.com/fjl/gencodec -type PayloadAttributes -field-override payloadAttributesMarshaling -out gen_blockparams.go
@@ -93,6 +94,7 @@ type ExecutableData struct {
 	BlobGasUsed      *uint64                 `json:"blobGasUsed"`
 	ExcessBlobGas    *uint64                 `json:"excessBlobGas"`
 	BlockAccessList  *bal.BlockAccessList    `json:"blockAccessList"`
+	Chunks           []*types.Chunk          `json:"chunks,omitempty"`
 	ExecutionWitness *types.ExecutionWitness `json:"executionWitness,omitempty"`
 }
 
@@ -356,6 +358,7 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 		ExcessBlobGas:    block.ExcessBlobGas(),
 		ExecutionWitness: block.ExecutionWitness(),
 		BlockAccessList:  block.Body().AccessList,
+		Chunks:           block.Chunks(),
 	}
 
 	// Add blobs.
