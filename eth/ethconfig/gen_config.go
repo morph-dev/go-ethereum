@@ -64,6 +64,8 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		OverrideVerkle          *uint64       `toml:",omitempty"`
 		TxSyncDefaultTimeout    time.Duration `toml:",omitempty"`
 		TxSyncMaxTimeout        time.Duration `toml:",omitempty"`
+		ExperimentalBAL         bool          `toml:",omitempty"`
+		ExperimentalChunks      bool          `toml:",omitempty"`
 	}
 	var enc Config
 	enc.Genesis = c.Genesis
@@ -113,6 +115,8 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.OverrideVerkle = c.OverrideVerkle
 	enc.TxSyncDefaultTimeout = c.TxSyncDefaultTimeout
 	enc.TxSyncMaxTimeout = c.TxSyncMaxTimeout
+	enc.ExperimentalBAL = c.ExperimentalBAL
+	enc.ExperimentalChunks = c.ExperimentalChunks
 	return &enc, nil
 }
 
@@ -166,6 +170,8 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		OverrideVerkle          *uint64        `toml:",omitempty"`
 		TxSyncDefaultTimeout    *time.Duration `toml:",omitempty"`
 		TxSyncMaxTimeout        *time.Duration `toml:",omitempty"`
+		ExperimentalBAL         *bool          `toml:",omitempty"`
+		ExperimentalChunks      *bool          `toml:",omitempty"`
 	}
 	var dec Config
 	if err := unmarshal(&dec); err != nil {
@@ -311,6 +317,12 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.TxSyncMaxTimeout != nil {
 		c.TxSyncMaxTimeout = *dec.TxSyncMaxTimeout
+	}
+	if dec.ExperimentalBAL != nil {
+		c.ExperimentalBAL = *dec.ExperimentalBAL
+	}
+	if dec.ExperimentalChunks != nil {
+		c.ExperimentalChunks = *dec.ExperimentalChunks
 	}
 	return nil
 }

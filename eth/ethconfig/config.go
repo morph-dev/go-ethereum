@@ -196,6 +196,10 @@ type Config struct {
 	// TODO: also note that it will cause execution of blocks with access lists to base
 	// their execution on the BAL.
 	ExperimentalBAL bool `toml:",omitempty"`
+
+	// ExperimentalChunks enables block chunking during block creation. It also allows block
+	// validation via individual chunks.
+	ExperimentalChunks bool `toml:",omitempty"`
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain config.

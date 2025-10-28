@@ -1017,6 +1017,12 @@ Please note that --` + MetricsHTTPFlag.Name + ` must be set to start the server.
 		Usage:    "Enable generation of EIP-7928 block access lists when importing post-Cancun blocks which lack them. When this flag is specified, importing blocks containing access lists triggers validation of their correctness and execution based off them. The header block access list field is not set with blocks created when this flag is specified, nor is it validated when importing blocks that contain access lists.  This is used for development purposes only.  Do not enable it otherwise.",
 		Category: flags.MiscCategory,
 	}
+
+	ExperimentalChunksFlag = &cli.BoolFlag{
+		Name:     "experimental.chunks",
+		Usage:    "Enable generation of block chunks. Used for prototyping purposes only.",
+		Category: flags.MiscCategory,
+	}
 )
 
 var (
@@ -1580,6 +1586,7 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 		log.Warn("The flag --miner.newpayload-timeout is deprecated and will be removed, please use --miner.recommit")
 		cfg.Recommit = ctx.Duration(MinerNewPayloadTimeoutFlag.Name)
 	}
+	cfg.Chunks = ctx.Bool(ExperimentalChunksFlag.Name)
 }
 
 func setRequiredBlocks(ctx *cli.Context, cfg *ethconfig.Config) {
@@ -1927,6 +1934,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 
 	cfg.ExperimentalBAL = ctx.Bool(ExperimentalBALFlag.Name)
+	cfg.ExperimentalChunks = ctx.Bool(ExperimentalChunksFlag.Name)
 }
 
 // MakeBeaconLightConfig constructs a beacon light client config based on the
