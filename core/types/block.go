@@ -190,6 +190,7 @@ type Body struct {
 	Uncles       []*Header
 	Withdrawals  []*Withdrawal        `rlp:"optional"`
 	AccessList   *bal.BlockAccessList `rlp:"optional,nil"`
+	Chunks       []*ChunkMetadata     `rlp:"optional"`
 }
 
 // Block represents an Ethereum block.
@@ -221,6 +222,7 @@ type Block struct {
 	witness *ExecutionWitness
 
 	accessList *bal.BlockAccessList
+	chunks     []*ChunkMetadata
 
 	// caches
 	hash atomic.Pointer[common.Hash]
@@ -239,6 +241,7 @@ type extblock struct {
 	Uncles      []*Header
 	Withdrawals []*Withdrawal        `rlp:"optional"`
 	AccessList  *bal.BlockAccessList `rlp:"optional"`
+	Chunks      []*ChunkMetadata     `rlp:"optional"`
 }
 
 // NewBlock creates a new block. The input data is copied, changes to header and to the
@@ -305,6 +308,10 @@ func NewBlock(header *Header, body *Body, receipts []*Receipt, hasher ListHasher
 		b.accessList = body.AccessList
 	}
 
+	if body.Chunks != nil {
+		b.chunks = body.Chunks
+	}
+
 	return b
 }
 
@@ -356,7 +363,7 @@ func (b *Block) DecodeRLP(s *rlp.Stream) error {
 	if err := s.Decode(&eb); err != nil {
 		return err
 	}
-	b.header, b.uncles, b.transactions, b.withdrawals, b.accessList = eb.Header, eb.Uncles, eb.Txs, eb.Withdrawals, eb.AccessList
+	b.header, b.uncles, b.transactions, b.withdrawals, b.accessList, b.chunks = eb.Header, eb.Uncles, eb.Txs, eb.Withdrawals, eb.AccessList, eb.Chunks
 	b.size.Store(rlp.ListSize(size))
 	return nil
 }
@@ -369,13 +376,14 @@ func (b *Block) EncodeRLP(w io.Writer) error {
 		Uncles:      b.uncles,
 		Withdrawals: b.withdrawals,
 		AccessList:  b.accessList,
+		Chunks:      b.chunks,
 	})
 }
 
 // Body returns the non-header content of the block.
 // Note the returned data is not an independent copy.
 func (b *Block) Body() *Body {
-	return &Body{b.transactions, b.uncles, b.withdrawals, b.accessList}
+	return &Body{b.transactions, b.uncles, b.withdrawals, b.accessList, b.chunks}
 }
 
 // Accessors for body data. These do not return a copy because the content
@@ -418,6 +426,7 @@ func (b *Block) TxHash() common.Hash      { return b.header.TxHash }
 func (b *Block) ReceiptHash() common.Hash { return b.header.ReceiptHash }
 func (b *Block) UncleHash() common.Hash   { return b.header.UncleHash }
 func (b *Block) Extra() []byte            { return common.CopyBytes(b.header.Extra) }
+func (b *Block) Chunks() []*ChunkMetadata { return b.chunks }
 
 func (b *Block) BaseFee() *big.Int {
 	if b.header.BaseFee == nil {
@@ -525,6 +534,7 @@ func (b *Block) WithBody(body Body) *Block {
 		uncles:       make([]*Header, len(body.Uncles)),
 		withdrawals:  slices.Clone(body.Withdrawals),
 		witness:      b.witness,
+		chunks:       slices.Clone(body.Chunks),
 	}
 	if body.AccessList != nil {
 		balCopy := body.AccessList.Copy()
@@ -536,6 +546,28 @@ func (b *Block) WithBody(body Body) *Block {
 	return block
 }
 
+func (b *Block) WithChunks(chunks []*ChunkHeader) *Block {
+	block := &Block{
+		header:       b.header,
+		uncles:       b.uncles,
+		transactions: b.transactions,
+		withdrawals:  b.withdrawals,
+		witness:      b.witness,
+		accessList:   b.accessList,
+	}
+	block.chunks = make([]*ChunkMetadata, 0, len(chunks))
+	for _, chunk := range chunks {
+		block.chunks = append(block.chunks, &ChunkMetadata{
+			FirstTxIndex: chunk.PreChunkTxCount,
+			TxCount:      chunk.TxCount,
+			GasUsed:      chunk.GasUsed,
+			BlobGasUsed:  chunk.BlobGasUsed,
+			IsLast:       chunk.IsLast,
+		})
+	}
+	return block
+}
+
 func (b *Block) WithWitness(witness *ExecutionWitness) *Block {
 	return &Block{
 		header:       b.header,
@@ -543,6 +575,7 @@ func (b *Block) WithWitness(witness *ExecutionWitness) *Block {
 		uncles:       b.uncles,
 		withdrawals:  b.withdrawals,
 		accessList:   b.accessList,
+		chunks:       b.chunks,
 		witness:      witness,
 	}
 }

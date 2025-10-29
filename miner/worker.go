@@ -19,10 +19,11 @@ package miner
 import (
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/tracing"
 	"math/big"
 	"sync/atomic"
 	"time"
+
+	"github.com/ethereum/go-ethereum/core/tracing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
@@ -138,6 +139,9 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 	body := types.Body{Transactions: work.txs, Withdrawals: genParam.withdrawals}
 	if work.alTracer != nil {
 		body.AccessList = work.alTracer.AccessList().ToEncodingObj()
+	}
+	if miner.config.Chunks {
+		body.Chunks = types.SplitIntoChunks(work.receipts)
 	}
 
 	allLogs := make([]*types.Log, 0)
@@ -277,6 +281,9 @@ func (miner *Miner) prepareWork(genParams *generateParams, witness bool) (*envir
 	}
 	if miner.chainConfig.IsAmsterdam(header.Number, header.Time) {
 		env.alTracer.OnPreTxExecutionDone()
+	}
+	if miner.config.Chunks {
+		// TODO(milos): set initial chunks
 	}
 	return env, nil
 }

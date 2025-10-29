@@ -249,6 +249,7 @@ func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload
 			withdrawals: args.Withdrawals,
 			beaconRoot:  args.BeaconRoot,
 			noTxs:       false,
+			// TODO(milos): set initial chunks
 		}
 
 		for {

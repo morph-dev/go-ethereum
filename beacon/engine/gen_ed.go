@@ -37,6 +37,7 @@ func (e ExecutableData) MarshalJSON() ([]byte, error) {
 		ExcessBlobGas    *hexutil.Uint64         `json:"excessBlobGas"`
 		BlockAccessList  *bal.BlockAccessList    `json:"blockAccessList"`
 		ExecutionWitness *types.ExecutionWitness `json:"executionWitness,omitempty"`
+		Chunks           []*types.ChunkHeader    `json:"chunks,omitempty"`
 	}
 	var enc ExecutableData
 	enc.ParentHash = e.ParentHash
@@ -63,6 +64,7 @@ func (e ExecutableData) MarshalJSON() ([]byte, error) {
 	enc.ExcessBlobGas = (*hexutil.Uint64)(e.ExcessBlobGas)
 	enc.BlockAccessList = e.BlockAccessList
 	enc.ExecutionWitness = e.ExecutionWitness
+	enc.Chunks = e.Chunks
 	return json.Marshal(&enc)
 }
 
@@ -88,6 +90,7 @@ func (e *ExecutableData) UnmarshalJSON(input []byte) error {
 		ExcessBlobGas    *hexutil.Uint64         `json:"excessBlobGas"`
 		BlockAccessList  *bal.BlockAccessList    `json:"blockAccessList"`
 		ExecutionWitness *types.ExecutionWitness `json:"executionWitness,omitempty"`
+		Chunks           []*types.ChunkHeader    `json:"chunks,omitempty"`
 	}
 	var dec ExecutableData
 	if err := json.Unmarshal(input, &dec); err != nil {
@@ -166,6 +169,9 @@ func (e *ExecutableData) UnmarshalJSON(input []byte) error {
 	}
 	if dec.ExecutionWitness != nil {
 		e.ExecutionWitness = dec.ExecutionWitness
+	}
+	if dec.Chunks != nil {
+		e.Chunks = dec.Chunks
 	}
 	return nil
 }

@@ -18,9 +18,10 @@ package engine
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/types/bal"
 	"math/big"
 	"slices"
+
+	"github.com/ethereum/go-ethereum/core/types/bal"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -94,6 +95,7 @@ type ExecutableData struct {
 	ExcessBlobGas    *uint64                 `json:"excessBlobGas"`
 	BlockAccessList  *bal.BlockAccessList    `json:"blockAccessList"`
 	ExecutionWitness *types.ExecutionWitness `json:"executionWitness,omitempty"`
+	Chunks           []*types.ChunkHeader    `json:"chunks,omitempty"`
 }
 
 // JSON type overrides for executableData.
@@ -329,6 +331,7 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 	}
 	return types.NewBlockWithHeader(header).
 			WithBody(body).
+			WithChunks(data.Chunks).
 			WithWitness(data.ExecutionWitness),
 		nil
 }
@@ -356,6 +359,7 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 		ExcessBlobGas:    block.ExcessBlobGas(),
 		ExecutionWitness: block.ExecutionWitness(),
 		BlockAccessList:  block.Body().AccessList,
+		Chunks:           block.CreateChunkHeaders(trie.NewStackTrie(nil)),
 	}
 
 	// Add blobs.

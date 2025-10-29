@@ -1,14 +1,13 @@
 package types
 
 import (
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/params"
 )
-
-type Chunks []*Chunk
 
 type Chunk struct {
 	Header          ChunkHeader         `json:"header"`
@@ -32,8 +31,6 @@ type ChunkHeader struct {
 	PreChunkTxCount     uint64      `json:"preChunkTxCount"`
 	TxCount             uint64      `json:"txCount"`
 	TxsRoot             common.Hash `json:"transactionsRoot"`
-	ReceiptsRoot        common.Hash `json:"receiptsRoot"`
-	Bloom               Bloom       `json:"logsBloom"`
 	PreChunkGasUsed     uint64      `json:"preChunkGasUsed"`
 	GasUsed             uint64      `json:"gasUsed"`
 	PreChunkBlobGasUsed uint64      `json:"preChunkBlobGasUsed"`
@@ -43,109 +40,96 @@ type ChunkHeader struct {
 	IsLast              bool        `json:"isLast"`
 
 	// TODO: consider adding
-	// PostStateRoot    common.Hash `json:"postStateRoot"`
-	// ParentBeaconRoot common.Hash `json:"parentBeaconBlockRoot"`
+	// ReceiptsRoot        common.Hash `json:"receiptsRoot"`
+	// Bloom               Bloom       `json:"logsBloom"`
+	// PostStateRoot       common.Hash `json:"postStateRoot"`
+	// ParentBeaconRoot    common.Hash `json:"parentBeaconBlockRoot"`
 }
 
-func CreateChunks(
-	blockMetadata *BlockMetadata,
-	transactions Transactions,
-	receipts Receipts,
-	withdrawals Withdrawals,
-	blockAccessList bal.BlockAccessList,
-	hasher ListHasher,
-) []*Chunk {
-	// Split into chunks
-	chunksMetadata := split(transactions, receipts, withdrawals, blockAccessList)
+type ChunkMetadata struct {
+	FirstTxIndex uint64
+	TxCount      uint64
+	GasUsed      uint64
+	BlobGasUsed  uint64
+	IsLast       bool
+}
 
-	chunks := make([]*Chunk, 0, len(chunksMetadata))
-	var (
-		preChunkGasUsed     uint64
-		preChunkBlobGasUsed uint64
+func (c *ChunkMetadata) String() string {
+	return fmt.Sprintf(
+		"Chunk { firstTx=%d txCount=%d gas=%d blobGas=%d last=%t }",
+		c.FirstTxIndex, c.TxCount, c.GasUsed, c.BlobGasUsed, c.IsLast,
 	)
-
-	for i, chunk := range chunksMetadata {
-		gasUsed := uint64(0)
-		blobGasUsed := uint64(0)
-		for _, receipt := range chunk.receipts {
-			gasUsed += receipt.GasUsed
-			blobGasUsed += receipt.BlobGasUsed
-		}
-
-		chunks = append(chunks, &Chunk{
-			Header: ChunkHeader{
-				ChunkIndex:          uint16(i),
-				PreChunkTxCount:     chunk.firstTxIndex,
-				TxsRoot:             DeriveSha(chunk.transactions, hasher),
-				ReceiptsRoot:        DeriveSha(chunk.receipts, hasher),
-				Bloom:               MergeBloom(chunk.receipts),
-				PreChunkGasUsed:     preChunkGasUsed,
-				GasUsed:             gasUsed,
-				PreChunkBlobGasUsed: preChunkBlobGasUsed,
-				BlobGasUsed:         blobGasUsed,
-				WithdrawalsRoot:     DeriveSha(chunk.withdrawals, hasher),
-				ChunkAccessListHash: chunk.chunkAccessList.Hash(),
-				IsLast:              chunk.isLast,
-			},
-			BlockMetadata:   blockMetadata,
-			Transactions:    chunk.transactions,
-			Withdrawals:     chunk.withdrawals,
-			ChunkAccessList: chunk.chunkAccessList,
-		})
-		preChunkGasUsed += gasUsed
-		preChunkBlobGasUsed += blobGasUsed
-	}
-
-	return chunks
 }
 
-type chunkMetadata struct {
-	firstTxIndex    uint64
-	transactions    Transactions
-	receipts        Receipts
-	withdrawals     Withdrawals
-	chunkAccessList bal.BlockAccessList
-	isLast          bool
-}
-
-func split(
-	transactions Transactions,
+func SplitIntoChunks(
 	receipts Receipts,
-	withdrawals Withdrawals,
-	blockAccessList bal.BlockAccessList,
-) []chunkMetadata {
-	chunks := make([]chunkMetadata, 0, params.MaxChunksPerBlock)
+) []*ChunkMetadata {
+	chunks := make([]*ChunkMetadata, 0, params.MaxChunksPerBlock)
 
 	var chunkFirstTxIndex uint64 = 0
 	var chunkGasUsed uint64 = 0
+	var chunkBlobGasUsed uint64 = 0
 
-	for i := range transactions {
+	for i := range receipts {
 		// check whether we can include tx "i" into current chunk
 		if chunkGasUsed+receipts[i].GasUsed <= params.ChunkMaxGas {
 			chunkGasUsed += receipts[i].GasUsed
+			chunkBlobGasUsed += receipts[i].BlobGasUsed
 		} else {
 			// create chunk without tx "i" and without withdrawals
-			chunks = append(chunks, chunkMetadata{
+			chunks = append(chunks, &ChunkMetadata{
 				chunkFirstTxIndex,
-				transactions[chunkFirstTxIndex:i],
-				receipts[chunkFirstTxIndex:i],
-				withdrawals[:0],
-				blockAccessList.Copy(), // TODO(milos): split chunks
-				/* isLast= */ false,
+				uint64(i) - chunkFirstTxIndex,
+				chunkGasUsed,
+				chunkBlobGasUsed,
+				/* IsLast= */ false,
 			})
 			chunkFirstTxIndex = uint64(i)
 			chunkGasUsed = receipts[i].GasUsed
+			chunkBlobGasUsed = receipts[i].BlobGasUsed
 		}
 	}
 	// create last chunk (with withdrawals)
-	chunks = append(chunks, chunkMetadata{
+	chunks = append(chunks, &ChunkMetadata{
 		chunkFirstTxIndex,
-		transactions[chunkFirstTxIndex:],
-		receipts[chunkFirstTxIndex:],
-		withdrawals,
-		blockAccessList.Copy(), // TODO(milos): split chunks
-		/* isLast= */ true,
+		uint64(len(receipts)) - chunkFirstTxIndex,
+		chunkGasUsed,
+		chunkBlobGasUsed,
+		/* IsLast= */ true,
 	})
 
 	return chunks
+}
+
+func (block *Block) CreateChunkHeaders(hasher ListHasher) []*ChunkHeader {
+	chunkHeaders := make([]*ChunkHeader, 0, len(block.chunks))
+
+	cumulativeGasUsed := uint64(0)
+	cumulativeBlobGasUsed := uint64(0)
+
+	for i, chunk := range block.chunks {
+		lastTxIndex := (chunk.FirstTxIndex + chunk.TxCount)
+		transactions := block.transactions[chunk.FirstTxIndex:lastTxIndex]
+
+		withdrawalsRoot := EmptyWithdrawalsHash
+		if chunk.IsLast {
+			withdrawalsRoot = *block.header.WithdrawalsHash
+		}
+		chunkHeaders = append(chunkHeaders, &ChunkHeader{
+			ChunkIndex:          uint16(i),
+			PreChunkTxCount:     chunk.FirstTxIndex,
+			TxCount:             chunk.TxCount,
+			TxsRoot:             DeriveSha(transactions, hasher),
+			PreChunkGasUsed:     cumulativeGasUsed,
+			GasUsed:             chunk.GasUsed,
+			PreChunkBlobGasUsed: cumulativeBlobGasUsed,
+			BlobGasUsed:         chunk.BlobGasUsed,
+			WithdrawalsRoot:     withdrawalsRoot,
+			ChunkAccessListHash: *block.header.BlockAccessListHash,
+			IsLast:              chunk.IsLast,
+		})
+		cumulativeGasUsed += chunk.GasUsed
+		cumulativeBlobGasUsed += chunk.BlobGasUsed
+	}
+	return chunkHeaders
 }
