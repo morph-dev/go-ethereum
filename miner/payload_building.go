@@ -37,13 +37,14 @@ import (
 // Check engine-api specification for more details.
 // https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#payloadattributesv3
 type BuildPayloadArgs struct {
-	Parent       common.Hash           // The parent block to build payload on top
-	Timestamp    uint64                // The provided timestamp of generated payload
-	FeeRecipient common.Address        // The provided recipient address for collecting transaction fee
-	Random       common.Hash           // The provided randomness value
-	Withdrawals  types.Withdrawals     // The provided withdrawals
-	BeaconRoot   *common.Hash          // The provided beaconRoot (Cancun)
-	Version      engine.PayloadVersion // Versioning byte for payload id calculation.
+	Parent        common.Hash           // The parent block to build payload on top
+	Timestamp     uint64                // The provided timestamp of generated payload
+	FeeRecipient  common.Address        // The provided recipient address for collecting transaction fee
+	Random        common.Hash           // The provided randomness value
+	Withdrawals   types.Withdrawals     // The provided withdrawals
+	BeaconRoot    *common.Hash          // The provided beaconRoot (Cancun)
+	Version       engine.PayloadVersion // Versioning byte for payload id calculation.
+	ParentPayload *Payload              // The parent payloadResult used when incrementally building chunks
 }
 
 // Id computes an 8-byte identifier by hashing the components of the payload arguments.
@@ -57,10 +58,30 @@ func (args *BuildPayloadArgs) Id() engine.PayloadID {
 	if args.BeaconRoot != nil {
 		hasher.Write(args.BeaconRoot[:])
 	}
+	if args.ParentPayload != nil {
+		hasher.Write(args.ParentPayload.Id()[:])
+	}
 	var out engine.PayloadID
 	copy(out[:], hasher.Sum(nil)[:8])
 	out[0] = byte(args.Version)
 	return out
+}
+
+type PayloadResult struct {
+	Block    *types.Block
+	Fees     *big.Int
+	Sidecars []*types.BlobTxSidecar
+	Requests [][]byte
+	Witness  *stateless.Witness
+}
+
+func (payloadResult *PayloadResult) CreateExecutionPayloadEnvelope() *engine.ExecutionPayloadEnvelope {
+	envelope := engine.BlockToExecutableData(payloadResult.Block, payloadResult.Fees, payloadResult.Sidecars, payloadResult.Requests)
+	if payloadResult.Witness != nil {
+		envelope.Witness = new(hexutil.Bytes)
+		*envelope.Witness, _ = rlp.EncodeToBytes(payloadResult.Witness) // cannot fail
+	}
+	return envelope
 }
 
 // Payload wraps the built payload(block waiting for sealing). According to the
@@ -69,32 +90,34 @@ func (args *BuildPayloadArgs) Id() engine.PayloadID {
 // the revenue. Therefore, the empty-block here is always available and full-block
 // will be set/updated afterwards.
 type Payload struct {
-	id            engine.PayloadID
-	empty         *types.Block
-	emptyWitness  *stateless.Witness
-	full          *types.Block
-	fullWitness   *stateless.Witness
-	sidecars      []*types.BlobTxSidecar
-	emptyRequests [][]byte
-	requests      [][]byte
-	fullFees      *big.Int
-	stop          chan struct{}
-	lock          sync.Mutex
-	cond          *sync.Cond
+	id    engine.PayloadID
+	empty PayloadResult
+	full  *PayloadResult
+	stop  chan struct{}
+	lock  sync.Mutex
+	cond  *sync.Cond
 }
 
 // newPayload initializes the payload object.
 func newPayload(empty *types.Block, emptyRequests [][]byte, witness *stateless.Witness, id engine.PayloadID) *Payload {
 	payload := &Payload{
-		id:            id,
-		empty:         empty,
-		emptyRequests: emptyRequests,
-		emptyWitness:  witness,
-		stop:          make(chan struct{}),
+		id: id,
+		empty: PayloadResult{
+			Block:    empty,
+			Fees:     big.NewInt(0),
+			Sidecars: nil,
+			Requests: emptyRequests,
+			Witness:  witness,
+		},
+		stop: make(chan struct{}),
 	}
 	log.Info("Starting work on payload", "id", payload.id)
 	payload.cond = sync.NewCond(&payload.lock)
 	return payload
+}
+
+func (payload *Payload) Id() *engine.PayloadID {
+	return &payload.id
 }
 
 // update updates the full-block with latest built version.
@@ -110,12 +133,14 @@ func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) {
 	// Ensure the newly provided full block has a higher transaction fee.
 	// In post-merge stage, there is no uncle reward anymore and transaction
 	// fee(apart from the mev revenue) is the only indicator for comparison.
-	if payload.full == nil || r.fees.Cmp(payload.fullFees) > 0 {
-		payload.full = r.block
-		payload.fullFees = r.fees
-		payload.sidecars = r.sidecars
-		payload.requests = r.requests
-		payload.fullWitness = r.witness
+	if payload.full == nil || r.fees.Cmp(payload.full.Fees) > 0 {
+		payload.full = &PayloadResult{
+			Block:    r.block,
+			Fees:     r.fees,
+			Sidecars: r.sidecars,
+			Requests: r.requests,
+			Witness:  r.witness,
+		}
 
 		feesInEther := new(big.Float).Quo(new(big.Float).SetInt(r.fees), big.NewFloat(params.Ether))
 		log.Info("Updated payload",
@@ -135,7 +160,7 @@ func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) {
 
 // Resolve returns the latest built payload and also terminates the background
 // thread for updating payload. It's safe to be called multiple times.
-func (payload *Payload) Resolve() *engine.ExecutionPayloadEnvelope {
+func (payload *Payload) Resolve() *PayloadResult {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
 
@@ -145,38 +170,23 @@ func (payload *Payload) Resolve() *engine.ExecutionPayloadEnvelope {
 		close(payload.stop)
 	}
 	if payload.full != nil {
-		envelope := engine.BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars, payload.requests)
-		if payload.fullWitness != nil {
-			envelope.Witness = new(hexutil.Bytes)
-			*envelope.Witness, _ = rlp.EncodeToBytes(payload.fullWitness) // cannot fail
-		}
-		return envelope
+		return payload.full
 	}
-	envelope := engine.BlockToExecutableData(payload.empty, big.NewInt(0), nil, payload.emptyRequests)
-	if payload.emptyWitness != nil {
-		envelope.Witness = new(hexutil.Bytes)
-		*envelope.Witness, _ = rlp.EncodeToBytes(payload.emptyWitness) // cannot fail
-	}
-	return envelope
+	return &payload.empty
 }
 
 // ResolveEmpty is basically identical to Resolve, but it expects empty block only.
 // It's only used in tests.
-func (payload *Payload) ResolveEmpty() *engine.ExecutionPayloadEnvelope {
+func (payload *Payload) ResolveEmpty() *PayloadResult {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
 
-	envelope := engine.BlockToExecutableData(payload.empty, big.NewInt(0), nil, payload.emptyRequests)
-	if payload.emptyWitness != nil {
-		envelope.Witness = new(hexutil.Bytes)
-		*envelope.Witness, _ = rlp.EncodeToBytes(payload.emptyWitness) // cannot fail
-	}
-	return envelope
+	return &payload.empty
 }
 
 // ResolveFull is basically identical to Resolve, but it expects full block only.
 // Don't call Resolve until ResolveFull returns, otherwise it might block forever.
-func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
+func (payload *Payload) ResolveFull() *PayloadResult {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
 
@@ -197,12 +207,7 @@ func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
 	default:
 		close(payload.stop)
 	}
-	envelope := engine.BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars, payload.requests)
-	if payload.fullWitness != nil {
-		envelope.Witness = new(hexutil.Bytes)
-		*envelope.Witness, _ = rlp.EncodeToBytes(payload.fullWitness) // cannot fail
-	}
-	return envelope
+	return payload.full
 }
 
 // buildPayload builds the payload according to the provided parameters.
@@ -227,6 +232,13 @@ func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload
 	// Construct a payload object for return.
 	payload := newPayload(empty.block, empty.requests, empty.witness, args.Id())
 
+	var chunksTransactions []*types.ChunkTransactions = nil
+	if args.ParentPayload != nil {
+		payload.full = args.ParentPayload.Resolve()
+		payload.full.Block.WithPreBuiltChunks()
+		chunksTransactions = payload.full.Block.ChunkTransactions(false)
+	}
+
 	// Spin up a routine for updating the payload in background. This strategy
 	// can maximum the revenue for including transactions with highest fee.
 	go func() {
@@ -249,7 +261,7 @@ func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload
 			withdrawals: args.Withdrawals,
 			beaconRoot:  args.BeaconRoot,
 			noTxs:       false,
-			// TODO(milos): set initial chunks
+			chunks:      chunksTransactions,
 		}
 
 		for {

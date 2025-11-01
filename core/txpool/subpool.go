@@ -82,6 +82,8 @@ type PendingFilter struct {
 	// when false, return only non-blob txs (peer-join announces, block space filling)
 	BlobTxs     bool
 	BlobVersion byte // Blob tx version to include. 0 means pre-Osaka, 1 means Osaka and later
+
+	ExcludedTxHashes map[common.Hash]struct{} // Transactions that should be excluded from the result
 }
 
 // TxMetadata denotes the metadata of a transaction.

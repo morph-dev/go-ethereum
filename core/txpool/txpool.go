@@ -363,7 +363,9 @@ func (p *TxPool) Pending(filter PendingFilter) map[common.Address][]*LazyTransac
 	txs := make(map[common.Address][]*LazyTransaction)
 	for _, subpool := range p.subpools {
 		for addr, set := range subpool.Pending(filter) {
-			txs[addr] = set
+			if len(set) > 0 {
+				txs[addr] = set
+			}
 		}
 	}
 	return txs

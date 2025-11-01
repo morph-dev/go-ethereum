@@ -142,6 +142,34 @@ type BlobsBundle struct {
 	Blobs       []hexutil.Bytes `json:"blobs"`
 }
 
+func CreateBlobsBundle(sidecars []*types.BlobTxSidecar) BlobsBundle {
+	// Add blobs.
+	bundle := BlobsBundle{
+		Commitments: make([]hexutil.Bytes, 0),
+		Blobs:       make([]hexutil.Bytes, 0),
+		Proofs:      make([]hexutil.Bytes, 0),
+	}
+	for _, sidecar := range sidecars {
+		for j := range sidecar.Blobs {
+			bundle.Blobs = append(bundle.Blobs, sidecar.Blobs[j][:])
+			bundle.Commitments = append(bundle.Commitments, sidecar.Commitments[j][:])
+		}
+		// - Before the Osaka fork, only version-0 blob transactions should be packed,
+		//   with the proof length equal to len(blobs).
+		//
+		// - After the Osaka fork, only version-1 blob transactions should be packed,
+		//   with the proof length equal to CELLS_PER_EXT_BLOB * len(blobs).
+		//
+		// Ideally, length validation should be performed based on the bundle version.
+		// In practice, this is unnecessary because blob transaction filtering is
+		// already done during payload construction.
+		for _, proof := range sidecar.Proofs {
+			bundle.Proofs = append(bundle.Proofs, proof[:])
+		}
+	}
+	return bundle
+}
+
 type BlobAndProofV1 struct {
 	Blob  hexutil.Bytes `json:"blob"`
 	Proof hexutil.Bytes `json:"proof"`
@@ -359,33 +387,11 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 		ExcessBlobGas:    block.ExcessBlobGas(),
 		ExecutionWitness: block.ExecutionWitness(),
 		BlockAccessList:  block.Body().AccessList,
-		Chunks:           block.CreateChunkHeaders(trie.NewStackTrie(nil)),
+		Chunks:           block.CreateChunkHeaders(true /* =finalize */, true /* =includePreBuilt */, trie.NewStackTrie(nil)),
 	}
 
 	// Add blobs.
-	bundle := BlobsBundle{
-		Commitments: make([]hexutil.Bytes, 0),
-		Blobs:       make([]hexutil.Bytes, 0),
-		Proofs:      make([]hexutil.Bytes, 0),
-	}
-	for _, sidecar := range sidecars {
-		for j := range sidecar.Blobs {
-			bundle.Blobs = append(bundle.Blobs, sidecar.Blobs[j][:])
-			bundle.Commitments = append(bundle.Commitments, sidecar.Commitments[j][:])
-		}
-		// - Before the Osaka fork, only version-0 blob transactions should be packed,
-		//   with the proof length equal to len(blobs).
-		//
-		// - After the Osaka fork, only version-1 blob transactions should be packed,
-		//   with the proof length equal to CELLS_PER_EXT_BLOB * len(blobs).
-		//
-		// Ideally, length validation should be performed based on the bundle version.
-		// In practice, this is unnecessary because blob transaction filtering is
-		// already done during payload construction.
-		for _, proof := range sidecar.Proofs {
-			bundle.Proofs = append(bundle.Proofs, proof[:])
-		}
-	}
+	bundle := CreateBlobsBundle(sidecars)
 
 	return &ExecutionPayloadEnvelope{
 		ExecutionPayload: data,
@@ -418,4 +424,58 @@ type ClientVersionV1 struct {
 
 func (v *ClientVersionV1) String() string {
 	return fmt.Sprintf("%s-%s-%s-%s", v.Code, v.Name, v.Version, v.Commit)
+}
+
+type ChunkPayload struct {
+	Header       *types.ChunkHeader   `json:"header"`
+	Transactions [][]byte             `json:"transactions"`
+	Withdrawals  []*types.Withdrawal  `json:"withdrawals"`
+	Requests     [][]byte             `json:"requests"`
+	AccessList   *bal.BlockAccessList `json:"cal"`
+	BlobsBundle  *BlobsBundle         `json:"blobsBundle"`
+}
+
+type ChunksEnvelope struct {
+	BlockMetadata types.ChunkBlockMetadata `json:"metadate"`
+	Chunks        []*ChunkPayload          `json:"chunks"`
+	PayloadID     *PayloadID               `json:"payloadId"`
+	Header        *types.Header            `json:"blockHeader"`
+}
+
+func CreateChunkPayload(block *types.Block, finalize bool, sidecars []*types.BlobTxSidecar, blockRequests [][]byte) []*ChunkPayload {
+	chunkHeaders := block.CreateChunkHeaders(finalize, false /* =includePreBuilt */, trie.NewStackTrie(nil))
+	chunkPayloads := make([]*ChunkPayload, 0, len(chunkHeaders))
+	for _, chunkHeader := range chunkHeaders {
+		txStart, txEnd := chunkHeader.PreTxCount, chunkHeader.PreTxCount+chunkHeader.TxCount
+		transactions := block.Transactions()[txStart:txEnd]
+		var withdrawals types.Withdrawals = nil
+		var requests [][]byte = nil
+		if chunkHeader.IsLast {
+			withdrawals = block.Withdrawals()
+			requests = blockRequests //TODO(milos): make this chunk specific
+		}
+		chunkAccessList := block.Body().AccessList // TODO(milos): make this chunk specific
+
+		chunkSidecars := make([]*types.BlobTxSidecar, 0)
+		sidecarIndex := 0
+		for i, tx := range block.Transactions() {
+			if tx.Type() == types.BlobTxType {
+				if int(chunkHeader.PreTxCount) <= i && i < int(chunkHeader.PreTxCount+chunkHeader.TxCount) {
+					chunkSidecars = append(chunkSidecars, sidecars[sidecarIndex])
+				}
+				sidecarIndex++
+			}
+		}
+		blobsBundle := CreateBlobsBundle(chunkSidecars)
+
+		chunkPayloads = append(chunkPayloads, &ChunkPayload{
+			Header:       chunkHeader,
+			Transactions: encodeTransactions(transactions),
+			Withdrawals:  withdrawals,
+			Requests:     requests,
+			AccessList:   chunkAccessList,
+			BlobsBundle:  &blobsBundle,
+		})
+	}
+	return chunkPayloads
 }

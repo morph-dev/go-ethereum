@@ -426,7 +426,32 @@ func (b *Block) TxHash() common.Hash      { return b.header.TxHash }
 func (b *Block) ReceiptHash() common.Hash { return b.header.ReceiptHash }
 func (b *Block) UncleHash() common.Hash   { return b.header.UncleHash }
 func (b *Block) Extra() []byte            { return common.CopyBytes(b.header.Extra) }
-func (b *Block) Chunks() []*ChunkMetadata { return b.chunks }
+
+func (b *Block) Chunks(finalize bool) []*ChunkMetadata {
+	if finalize || len(b.chunks) == 0 {
+		return b.chunks
+	} else {
+		return b.chunks[:len(b.chunks)-1]
+	}
+}
+func (b *Block) ChunkTransactions(finalize bool) []*ChunkTransactions {
+	chunks := b.Chunks(finalize)
+	chunkTransactions := make([]*ChunkTransactions, 0, len(chunks))
+	for _, chunk := range chunks {
+		chunkTransactions = append(chunkTransactions, &ChunkTransactions{
+			chunk,
+			b.Transactions()[chunk.FirstTxIndex : chunk.FirstTxIndex+chunk.TxCount],
+		})
+	}
+	return chunkTransactions
+}
+func (b *Block) WithPreBuiltChunks() {
+	for i := range b.chunks {
+		chunkMetadata := *b.chunks[i]
+		chunkMetadata.IsPreBuilt = !chunkMetadata.IsLast
+		b.chunks[i] = &chunkMetadata
+	}
+}
 
 func (b *Block) BaseFee() *big.Int {
 	if b.header.BaseFee == nil {
@@ -558,7 +583,7 @@ func (b *Block) WithChunks(chunks []*ChunkHeader) *Block {
 	block.chunks = make([]*ChunkMetadata, 0, len(chunks))
 	for _, chunk := range chunks {
 		block.chunks = append(block.chunks, &ChunkMetadata{
-			FirstTxIndex: chunk.PreChunkTxCount,
+			FirstTxIndex: chunk.PreTxCount,
 			TxCount:      chunk.TxCount,
 			GasUsed:      chunk.GasUsed,
 			BlobGasUsed:  chunk.BlobGasUsed,

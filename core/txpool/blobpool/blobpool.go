@@ -1981,6 +1981,10 @@ func (p *BlobPool) Pending(filter txpool.PendingFilter) map[common.Address][]*tx
 					break // execution gas limit is too high
 				}
 			}
+
+			if _, excluded := filter.ExcludedTxHashes[tx.hash]; excluded {
+				continue
+			}
 			// Transaction was accepted according to the filter, append to the pending list
 			lazies = append(lazies, &txpool.LazyTransaction{
 				Pool:      p,

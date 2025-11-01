@@ -626,14 +626,19 @@ func (s Transactions) EncodeIndex(i int, w *bytes.Buffer) {
 	}
 }
 
+func (s Transactions) HashSet() map[common.Hash]struct{} {
+	hashes := make(map[common.Hash]struct{}, s.Len())
+	for _, tx := range s {
+		hashes[tx.Hash()] = struct{}{}
+	}
+	return hashes
+}
+
 // TxDifference returns a new set of transactions that are present in a but not in b.
 func TxDifference(a, b Transactions) Transactions {
 	keep := make(Transactions, 0, len(a))
 
-	remove := make(map[common.Hash]struct{}, b.Len())
-	for _, tx := range b {
-		remove[tx.Hash()] = struct{}{}
-	}
+	remove := b.HashSet()
 
 	for _, tx := range a {
 		if _, ok := remove[tx.Hash()]; !ok {

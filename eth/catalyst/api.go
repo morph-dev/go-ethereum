@@ -116,6 +116,7 @@ var caps = []string{
 	"engine_getPayloadBodiesByRangeV1",
 	"engine_getPayloadBodiesByRangeV2",
 	"engine_getClientVersionV1",
+	"engine_getChunksV1",
 }
 
 var (
@@ -515,7 +516,65 @@ func (api *ConsensusAPI) getPayload(payloadID engine.PayloadID, full bool) (*eng
 	if data == nil {
 		return nil, engine.UnknownPayload
 	}
-	return data, nil
+	return data.CreateExecutionPayloadEnvelope(), nil
+}
+
+func (api *ConsensusAPI) GetChunksV1(payloadID engine.PayloadID, finalize bool) (*engine.ChunksEnvelope, error) {
+	if !payloadID.Is(engine.PayloadV4) {
+		return nil, engine.UnsupportedFork
+	}
+	log.Trace("Engine API request received", "method", "GetChunks", "id", payloadID, "finalize", finalize)
+
+	payload := api.localBlocks.getPayload(payloadID)
+	if payload == nil {
+		return nil, engine.UnknownPayload
+	}
+	payloadResult := payload.Resolve()
+	block := payloadResult.Block
+
+	envelope := engine.ChunksEnvelope{
+		BlockMetadata: types.ChunkBlockMetadata{
+			ParentHash:       block.ParentHash(),
+			Number:           block.NumberU64(),
+			Timestamp:        block.Time(),
+			MixHash:          block.MixDigest(),
+			BaseFeePerGas:    *block.BaseFee(),
+			ParentBeaconRoot: *block.BeaconRoot(),
+		},
+		Chunks: engine.CreateChunkPayload(block, finalize, payloadResult.Sidecars, payloadResult.Requests),
+	}
+
+	if finalize {
+		envelope.Header = block.Header()
+	} else {
+		args := &miner.BuildPayloadArgs{
+			Parent:        block.ParentHash(),
+			Timestamp:     block.Time(),
+			FeeRecipient:  block.Coinbase(),
+			Random:        block.MixDigest(),
+			Withdrawals:   block.Withdrawals(),
+			BeaconRoot:    block.BeaconRoot(),
+			Version:       payload.Id().Version(),
+			ParentPayload: payload,
+		}
+		newPayloadId := args.Id()
+		envelope.PayloadID = &newPayloadId
+
+		// If we already are busy generating this work, then we do not need
+		// to start a second process.
+		if !api.localBlocks.has(*envelope.PayloadID) {
+			newPayload, err := api.eth.Miner().BuildPayload(args, payloadResult.Witness != nil)
+			if err != nil {
+				log.Error("Failed to build chunk payload", "err", err)
+				return nil, engine.InvalidPayloadAttributes.With(err)
+			}
+			api.localBlocks.put(*envelope.PayloadID, newPayload)
+		}
+
+		return &envelope, nil
+	}
+
+	return &envelope, nil
 }
 
 // GetBlobsV1 returns a blob from the transaction pool.

@@ -683,7 +683,7 @@ func assembleEnvelope(api *ConsensusAPI, parentHash common.Hash, params *engine.
 	if err != nil {
 		return nil, err
 	}
-	return payload.ResolveFull(), nil
+	return payload.ResolveFull().CreateExecutionPayloadEnvelope(), nil
 }
 
 func assembleBlock(api *ConsensusAPI, parentHash common.Hash, params *engine.PayloadAttributes) (*engine.ExecutableData, error) {

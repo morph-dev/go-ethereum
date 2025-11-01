@@ -178,16 +178,16 @@ func TestBuildPayload(t *testing.T) {
 			t.Fatal("Unexpected transaction set")
 		}
 	}
-	empty := payload.ResolveEmpty()
+	empty := payload.ResolveEmpty().CreateExecutionPayloadEnvelope()
 	verify(empty, 0)
 
-	full := payload.ResolveFull()
+	full := payload.ResolveFull().CreateExecutionPayloadEnvelope()
 	verify(full, len(pendingTxs))
 
 	// Ensure resolve can be called multiple times and the
 	// result should be unchanged
-	dataOne := payload.Resolve()
-	dataTwo := payload.Resolve()
+	dataOne := payload.Resolve().CreateExecutionPayloadEnvelope()
+	dataTwo := payload.Resolve().CreateExecutionPayloadEnvelope()
 	if !reflect.DeepEqual(dataOne, dataTwo) {
 		t.Fatal("Unexpected payload data")
 	}
