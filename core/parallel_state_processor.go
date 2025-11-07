@@ -3,16 +3,28 @@ package core
 import (
 	"cmp"
 	"fmt"
+	"math/big"
+	"slices"
+	"time"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/log"
 	"golang.org/x/sync/errgroup"
-	"slices"
-	"time"
 )
+
+type ParallelProcessorContext struct {
+	blockContext *vm.BlockContext
+	blockHash    common.Hash
+	blockTxCount int    // total number of transactions in a block
+	txCount      uint64 // number of transaction that will be processed in parallel
+	preGasUsed   uint64
+}
 
 // ProcessResultWithMetrics wraps ProcessResult with some metrics that are
 // emitted when executing blocks containing access lists.
@@ -47,21 +59,15 @@ func NewParallelStateProcessor(chain *HeaderChain, vmConfig *vm.Config) Parallel
 	}
 }
 
-// called by resultHandler when all transactions have successfully executed.
+// called when all transactions have successfully executed.
 // performs post-tx state transition (system contracts and withdrawals)
-// and calculates the ProcessResult, returning it to be sent on resCh
-// by resultHandler
-func (p *ParallelStateProcessor) prepareExecResult(block *types.Block, allStateReads *bal.StateAccesses, tExecStart time.Time, postTxState *state.StateDB, receipts types.Receipts) *ProcessResultWithMetrics {
-	tExec := time.Since(tExecStart)
-	var requests [][]byte
-	tPostprocessStart := time.Now()
-	header := block.Header()
-
+// and updates the ProcessResultWithMetrics
+func (p *ParallelStateProcessor) processPostTx(context *ParallelProcessorContext, allStateReads *bal.StateAccesses, postTxState *state.StateDB, requests *[][]byte, withdrawals types.Withdrawals) error {
 	balTracer, hooks := NewBlockAccessListTracer()
 	tracingStateDB := state.NewHookedState(postTxState, hooks)
-	context := NewEVMBlockContext(header, p.chain, nil)
-	postTxState.SetAccessListIndex(len(block.Transactions()) + 1)
+	postTxState.SetAccessListIndex(context.blockTxCount + 1)
 
+	blockContext := context.blockContext
 	cfg := vm.Config{
 		Tracer:                  hooks,
 		NoBaseFee:               p.vmCfg.NoBaseFee,
@@ -70,57 +76,26 @@ func (p *ParallelStateProcessor) prepareExecResult(block *types.Block, allStateR
 		StatelessSelfValidation: p.vmCfg.StatelessSelfValidation,
 		EnableWitnessStats:      p.vmCfg.EnableWitnessStats,
 	}
-	cfg.Tracer = hooks
-	evm := vm.NewEVM(context, tracingStateDB, p.chainConfig(), cfg)
-
-	// 1. order the receipts by tx index
-	// 2. correctly calculate the cumulative gas used per receipt, returning bad block error if it goes over the allowed
-	slices.SortFunc(receipts, func(a, b *types.Receipt) int {
-		return cmp.Compare(a.TransactionIndex, b.TransactionIndex)
-	})
-
-	var cumulativeGasUsed uint64
-	var allLogs []*types.Log
-	for _, receipt := range receipts {
-		receipt.CumulativeGasUsed = cumulativeGasUsed + receipt.GasUsed
-		cumulativeGasUsed += receipt.GasUsed
-		if receipt.CumulativeGasUsed > header.GasLimit {
-			return &ProcessResultWithMetrics{
-				ProcessResult: &ProcessResult{Error: fmt.Errorf("gas limit exceeded")},
-			}
-		}
-		allLogs = append(allLogs, receipt.Logs...)
-	}
+	evm := vm.NewEVM(*blockContext, tracingStateDB, p.chainConfig(), cfg)
 
 	// Read requests if Prague is enabled.
-	if p.chainConfig().IsPrague(block.Number(), block.Time()) {
-		requests = [][]byte{}
-		// EIP-6110
-		if err := ParseDepositLogs(&requests, allLogs, p.chainConfig()); err != nil {
-			return &ProcessResultWithMetrics{
-				ProcessResult: &ProcessResult{Error: err},
-			}
-		}
-
+	if p.chainConfig().IsPrague(blockContext.BlockNumber, blockContext.Time) {
 		// EIP-7002
-		err := ProcessWithdrawalQueue(&requests, evm)
-		if err != nil {
-			return &ProcessResultWithMetrics{
-				ProcessResult: &ProcessResult{Error: err},
-			}
+		if err := ProcessWithdrawalQueue(requests, evm); err != nil {
+			return err
 		}
 
 		// EIP-7251
-		err = ProcessConsolidationQueue(&requests, evm)
-		if err != nil {
-			return &ProcessResultWithMetrics{
-				ProcessResult: &ProcessResult{Error: err},
-			}
+		if err := ProcessConsolidationQueue(requests, evm); err != nil {
+			return err
 		}
 	}
 
+	// TODO(milos): empty header and body with only withdrawals is minimal required
+	header := types.Header{Difficulty: common.Big0}
+	body := types.Body{Withdrawals: withdrawals}
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.chain.Engine().Finalize(p.chain, header, tracingStateDB, block.Body())
+	p.chain.Engine().Finalize(p.chain, &header, tracingStateDB, &body)
 	// invoke FinaliseIdxChanges so that withdrawals are accounted for in the state diff
 	postTxState.Finalise(true)
 
@@ -128,31 +103,18 @@ func (p *ParallelStateProcessor) prepareExecResult(block *types.Block, allStateR
 	diff, stateReads := balTracer.builder.FinalizedIdxChanges()
 	allStateReads.Merge(stateReads)
 
-	balIdx := len(block.Transactions()) + 1
+	balIdx := context.blockTxCount + 1
 	if err := postTxState.BlockAccessList().ValidateStateDiff(balIdx, diff); err != nil {
-		return &ProcessResultWithMetrics{
-			ProcessResult: &ProcessResult{Error: err},
-		}
+		return err
 	}
 
+	// TODO(milos): maybe disable this until BAL is fixed for chunks
 	if err := postTxState.BlockAccessList().ValidateStateReads(*allStateReads); err != nil {
-		return &ProcessResultWithMetrics{
-			ProcessResult: &ProcessResult{Error: err},
-		}
+		log.Error("INVALID BAL STATE READS")
+		return err
 	}
 
-	tPostprocess := time.Since(tPostprocessStart)
-
-	return &ProcessResultWithMetrics{
-		ProcessResult: &ProcessResult{
-			Receipts: receipts,
-			Requests: requests,
-			Logs:     allLogs,
-			GasUsed:  cumulativeGasUsed,
-		},
-		PostProcessTime: tPostprocess,
-		ExecTime:        tExec,
-	}
+	return nil
 }
 
 type txExecResult struct {
@@ -165,18 +127,20 @@ type txExecResult struct {
 
 // resultHandler polls until all transactions have finished executing and the
 // state root calculation is complete. The result is emitted on resCh.
-func (p *ParallelStateProcessor) resultHandler(block *types.Block, preTxStateReads bal.StateAccesses, postTxState *state.StateDB, tExecStart time.Time, txResCh <-chan txExecResult, stateRootCalcResCh <-chan stateRootCalculationResult, resCh chan *ProcessResultWithMetrics) {
+func (p *ParallelStateProcessor) resultHandler(context *ParallelProcessorContext, preTxStateReads bal.StateAccesses, txResCh <-chan txExecResult, resCh chan *ProcessResult) {
+	blockContext := context.blockContext
+
 	// 1. if the block has transactions, receive the execution results from all of them and return an error on resCh if any txs err'd
 	// 2. once all txs are executed, compute the post-tx state transition and produce the ProcessResult sending it on resCh (or an error if the post-tx state didn't match what is reported in the BAL)
 	var receipts []*types.Receipt
 	gp := new(GasPool)
-	gp.SetGas(block.GasLimit())
+	gp.SetGas(blockContext.GasLimit)
 	var execErr error
-	var numTxComplete int
+	var numTxComplete uint64
 
 	allReads := make(bal.StateAccesses)
 	allReads.Merge(preTxStateReads)
-	if len(block.Transactions()) > 0 {
+	if context.txCount > 0 {
 	loop:
 		for {
 			select {
@@ -194,29 +158,51 @@ func (p *ParallelStateProcessor) resultHandler(block *types.Block, preTxStateRea
 					}
 				}
 				numTxComplete++
-				if numTxComplete == len(block.Transactions()) {
+				if numTxComplete == context.txCount {
 					break loop
 				}
 			}
 		}
 
 		if execErr != nil {
-			resCh <- &ProcessResultWithMetrics{ProcessResult: &ProcessResult{Error: execErr}}
+			resCh <- &ProcessResult{Error: execErr}
 			return
 		}
 	}
 
-	execResults := p.prepareExecResult(block, &allReads, tExecStart, postTxState, receipts)
-	rootCalcRes := <-stateRootCalcResCh
+	// 1. order the receipts by tx index
+	// 2. correctly calculate the cumulative gas used per receipt, returning bad block error if it goes over the allowed
+	slices.SortFunc(receipts, func(a, b *types.Receipt) int {
+		return cmp.Compare(a.TransactionIndex, b.TransactionIndex)
+	})
 
-	if execResults.ProcessResult.Error != nil {
-		resCh <- execResults
-	} else if rootCalcRes.err != nil {
-		resCh <- &ProcessResultWithMetrics{ProcessResult: &ProcessResult{Error: rootCalcRes.err}}
-	} else {
-		execResults.RootCalcTime = rootCalcRes.rootCalcTime
-		execResults.PrestateLoadTime = rootCalcRes.prestateLoadTime
-		resCh <- execResults
+	var cumulativeGasUsed = context.preGasUsed
+	var allLogs []*types.Log
+	for _, receipt := range receipts {
+		cumulativeGasUsed += receipt.GasUsed
+		receipt.CumulativeGasUsed = cumulativeGasUsed
+		if receipt.CumulativeGasUsed > blockContext.GasLimit {
+			resCh <- &ProcessResult{Error: fmt.Errorf("gas limit exceeded")}
+			return
+		}
+		allLogs = append(allLogs, receipt.Logs...)
+	}
+
+	var requests [][]byte = nil
+	if p.chainConfig().IsPrague(blockContext.BlockNumber, blockContext.Time) {
+		requests = [][]byte{}
+		// EIP-6110
+		if err := ParseDepositLogs(&requests, allLogs, p.chainConfig()); err != nil {
+			resCh <- &ProcessResult{Error: err}
+			return
+		}
+	}
+
+	resCh <- &ProcessResult{
+		Receipts: receipts,
+		Requests: requests,
+		Logs:     allLogs,
+		GasUsed:  cumulativeGasUsed,
 	}
 }
 
@@ -229,7 +215,7 @@ type stateRootCalculationResult struct {
 
 // calcAndVerifyRoot performs the post-state root hash calculation, verifying
 // it against what is reported by the block and returning a result on resCh.
-func (p *ParallelStateProcessor) calcAndVerifyRoot(preState *state.StateDB, block *types.Block, resCh chan stateRootCalculationResult) {
+func (p *ParallelStateProcessor) calcAndVerifyRoot(preState *state.StateDB, expectedStateRoot common.Hash, resCh chan stateRootCalculationResult) {
 	// calculate and apply the block state modifications
 	root, prestateLoadTime, rootCalcTime := preState.BlockAccessList().StateRoot(preState)
 
@@ -239,18 +225,18 @@ func (p *ParallelStateProcessor) calcAndVerifyRoot(preState *state.StateDB, bloc
 		rootCalcTime:     rootCalcTime,
 	}
 
-	if root != block.Root() {
-		res.err = fmt.Errorf("state root mismatch. local: %x. remote: %x", root, block.Root())
+	if root != expectedStateRoot {
+		res.err = fmt.Errorf("state root mismatch. local: %x. remote: %x", root, expectedStateRoot)
 	}
 	resCh <- res
 }
 
 // execTx executes single transaction returning a result which includes state accessed/modified
-func (p *ParallelStateProcessor) execTx(block *types.Block, tx *types.Transaction, txIdx int, db *state.StateDB, signer types.Signer) *txExecResult {
-	header := block.Header()
+func (p *ParallelStateProcessor) execTx(context *ParallelProcessorContext, tx *types.Transaction, txIdx int, db *state.StateDB, signer types.Signer) *txExecResult {
+	blockContext := context.blockContext
+
 	balTracer, hooks := NewBlockAccessListTracer()
 	tracingStateDB := state.NewHookedState(db, hooks)
-	context := NewEVMBlockContext(header, p.chain, nil)
 
 	cfg := vm.Config{
 		Tracer:                  hooks,
@@ -260,19 +246,18 @@ func (p *ParallelStateProcessor) execTx(block *types.Block, tx *types.Transactio
 		StatelessSelfValidation: p.vmCfg.StatelessSelfValidation,
 		EnableWitnessStats:      p.vmCfg.EnableWitnessStats,
 	}
-	cfg.Tracer = hooks
-	evm := vm.NewEVM(context, tracingStateDB, p.chainConfig(), cfg)
+	evm := vm.NewEVM(*blockContext, tracingStateDB, p.chainConfig(), cfg)
 
-	msg, err := TransactionToMessage(tx, signer, header.BaseFee)
+	msg, err := TransactionToMessage(tx, signer, blockContext.BaseFee)
 	if err != nil {
 		err = fmt.Errorf("could not apply tx %d [%v]: %w", txIdx, tx.Hash().Hex(), err)
 		return &txExecResult{err: err}
 	}
 	gp := new(GasPool)
-	gp.SetGas(block.GasLimit())
+	gp.SetGas(blockContext.GasLimit)
 	db.SetTxContext(tx.Hash(), txIdx)
 	var gasUsed uint64
-	receipt, err := ApplyTransactionWithEVM(msg, gp, db, block.Number(), block.Hash(), context.Time, tx, &gasUsed, evm)
+	receipt, err := ApplyTransactionWithEVM(msg, gp, db, blockContext.BlockNumber, context.blockHash, blockContext.Time, tx, &gasUsed, evm)
 	if err != nil {
 		err := fmt.Errorf("could not apply tx %d [%v]: %w", txIdx, tx.Hash().Hex(), err)
 		return &txExecResult{err: err}
@@ -294,27 +279,21 @@ func (p *ParallelStateProcessor) execTx(block *types.Block, tx *types.Transactio
 // to contain an access list.
 func (p *ParallelStateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (*ProcessResultWithMetrics, error) {
 	var (
-		header = block.Header()
-		resCh  = make(chan *ProcessResultWithMetrics)
-		signer = types.MakeSigner(p.chainConfig(), header.Number, header.Time)
+		header                = block.Header()
+		signer                = types.MakeSigner(p.chainConfig(), header.Number, header.Time)
+		resCh                 = make(chan *ProcessResult)
+		txResCh               = make(chan txExecResult)
+		stateRootCalcResultCh = make(chan stateRootCalculationResult)
+		res                   = ProcessResultWithMetrics{}
 	)
 
-	txResCh := make(chan txExecResult)
-	pStart := time.Now()
-	var (
-		tPreprocess      time.Duration // time to create a set of prestates for parallel transaction execution
-		tExecStart       time.Time
-		rootCalcResultCh = make(chan stateRootCalculationResult)
-	)
+	tPreProcessStart := time.Now()
 
 	// Mutate the block and state according to any hard-fork specs
 	if p.chainConfig().DAOForkSupport && p.chainConfig().DAOForkBlock != nil && p.chainConfig().DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(statedb)
 	}
-	var (
-		context vm.BlockContext
-	)
-	alReader := state.NewBALReader(block, statedb)
+	alReader := state.NewBALReader(*block.Body().AccessList, block.Transactions().Len(), statedb)
 	statedb.SetBlockAccessList(alReader)
 
 	balTracer, hooks := NewBlockAccessListTracer()
@@ -322,8 +301,15 @@ func (p *ParallelStateProcessor) Process(block *types.Block, statedb *state.Stat
 	// TODO: figure out exactly why we need to set the hooks on the TracingStateDB and the vm.Config
 	cfg.Tracer = hooks
 
-	context = NewEVMBlockContext(header, p.chain, nil)
-	evm := vm.NewEVM(context, tracingStateDB, p.chainConfig(), cfg)
+	blockContext := NewEVMBlockContext(header, p.chain, nil)
+	context := ParallelProcessorContext{
+		blockContext: &blockContext,
+		blockTxCount: block.Transactions().Len(),
+		txCount:      uint64(block.Transactions().Len()),
+		blockHash:    block.Hash(),
+		preGasUsed:   0,
+	}
+	evm := vm.NewEVM(blockContext, tracingStateDB, p.chainConfig(), cfg)
 
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
 		ProcessBeaconBlockRoot(*beaconRoot, evm)
@@ -344,33 +330,155 @@ func (p *ParallelStateProcessor) Process(block *types.Block, statedb *state.Stat
 	// the post-tx state transition is verified by resultHandler
 	postTxState := statedb.Copy()
 
-	tPreprocess = time.Since(pStart)
+	res.PreProcessTime = time.Since(tPreProcessStart)
+	tExecStart := time.Now()
 
 	// execute transactions and state root calculation in parallel
 
 	// TODO: figure out how to funnel the state reads from the bal tracer through to the post-block-exec state/slot read
 	// validation
-	tExecStart = time.Now()
-	go p.resultHandler(block, stateReads, postTxState, tExecStart, txResCh, rootCalcResultCh, resCh)
+	go p.resultHandler(&context, stateReads, txResCh, resCh)
 	var workers errgroup.Group
 	startingState := statedb.Copy()
 	for i, tx := range block.Transactions() {
-		tx := tx
-		i := i
+		txIndex, tx := i, tx
 		workers.Go(func() error {
-			res := p.execTx(block, tx, i, startingState.Copy(), signer)
+			res := p.execTx(&context, tx, txIndex, startingState.Copy(), signer)
 			txResCh <- *res
 			return nil
 		})
 	}
 
-	go p.calcAndVerifyRoot(statedb, block, rootCalcResultCh)
+	go p.calcAndVerifyRoot(statedb, block.Root(), stateRootCalcResultCh)
 
-	res := <-resCh
+	res.ProcessResult = <-resCh
 	if res.ProcessResult.Error != nil {
 		return nil, res.ProcessResult.Error
 	}
-	res.PreProcessTime = tPreprocess
-	//	res.PreProcessLoadTime = tPreprocessLoad
-	return res, nil
+
+	res.ExecTime = time.Since(tExecStart)
+	tPostProcessStart := time.Now()
+
+	if err := p.processPostTx(&context, &stateReads, postTxState, &res.ProcessResult.Requests, block.Withdrawals()); err != nil {
+		return nil, err
+	}
+	res.PostProcessTime = time.Since(tPostProcessStart)
+
+	// Wait for stateRootCalc
+	rootCalcRes := <-stateRootCalcResultCh
+	if rootCalcRes.err != nil {
+		return nil, rootCalcRes.err
+	}
+	res.RootCalcTime = rootCalcRes.rootCalcTime
+	res.PrestateLoadTime = rootCalcRes.prestateLoadTime
+
+	return &res, nil
+}
+
+func (p *ParallelStateProcessor) ProcessChunk(
+	blockMetadata *types.ChunkBlockMetadata,
+	chunkHeader *types.ChunkHeader,
+	transactions types.Transactions,
+	withdrawals types.Withdrawals,
+	chunkAccessLists bal.BlockAccessList,
+	statedb *state.StateDB,
+	cfg vm.Config,
+) (*ProcessResultWithMetrics, error) {
+	var (
+		resCh   = make(chan *ProcessResult)
+		txResCh = make(chan txExecResult)
+		res     = ProcessResultWithMetrics{}
+	)
+
+	context := ParallelProcessorContext{
+		blockContext: createBlockContext(blockMetadata, p.chain),
+		blockTxCount: int(chunkHeader.PreTxCount + chunkHeader.TxCount),
+		txCount:      chunkHeader.TxCount,
+		blockHash:    common.Hash{}, // TODO(milos): This is ok (probably)
+		preGasUsed:   chunkHeader.PreGasUsed,
+	}
+
+	tPreProcessStart := time.Now()
+
+	alReader := state.NewBALReader(chunkAccessLists, int(context.blockTxCount), statedb)
+	statedb.SetBlockAccessList(alReader)
+
+	blockContext := context.blockContext
+
+	signer := types.MakeSigner(p.chainConfig(), blockContext.BlockNumber, blockContext.Time)
+	allStateReads := make(bal.StateAccesses)
+
+	if chunkHeader.ChunkIndex == 0 {
+		balTracer, hooks := NewBlockAccessListTracer()
+		tracingStateDB := state.NewHookedState(statedb, hooks)
+		cfg.Tracer = hooks
+
+		evm := vm.NewEVM(*blockContext, tracingStateDB, p.chainConfig(), cfg)
+		ProcessBeaconBlockRoot(blockMetadata.ParentBeaconRoot, evm)
+
+		if p.chainConfig().IsPrague(blockContext.BlockNumber, blockContext.Time) || p.chainConfig().IsVerkle(blockContext.BlockNumber, blockContext.Time) {
+			ProcessParentBlockHash(blockMetadata.ParentHash, evm)
+		}
+		balTracer.OnPreTxExecutionDone()
+
+		// TODO(milos): Correctly validate BAL
+		diff, stateReads := balTracer.builder.FinalizedIdxChanges()
+		if err := statedb.BlockAccessList().ValidateStateDiff(0, diff); err != nil {
+			return nil, err
+		}
+		allStateReads.Merge(stateReads)
+	}
+
+	// compute the post-tx state prestate (before applying final block system calls and eip-4895 withdrawals)
+	// the post-tx state transition is verified by resultHandler
+	postTxState := statedb.Copy()
+
+	res.PreProcessTime = time.Since(tPreProcessStart)
+	tExecStart := time.Now()
+
+	go p.resultHandler(&context, allStateReads, txResCh, resCh)
+	var workers errgroup.Group
+	startingState := statedb.Copy()
+	for i, tx := range transactions {
+		txIndex, tx := int(chunkHeader.PreTxCount)+i, tx
+		workers.Go(func() error {
+			res := p.execTx(&context, tx, txIndex, startingState.Copy(), signer)
+			txResCh <- *res
+			return nil
+		})
+	}
+
+	res.ProcessResult = <-resCh
+	if res.ProcessResult.Error != nil {
+		return nil, res.ProcessResult.Error
+	}
+
+	res.ExecTime = time.Since(tExecStart)
+
+	if chunkHeader.IsLast {
+		tPostProcessStart := time.Now()
+		if err := p.processPostTx(&context, &allStateReads, postTxState, &res.ProcessResult.Requests, withdrawals); err != nil {
+			return nil, err
+		}
+		res.PostProcessTime = time.Since(tPostProcessStart)
+	}
+
+	return &res, nil
+}
+
+func createBlockContext(blockMetadata *types.ChunkBlockMetadata, chain ChainContext) *vm.BlockContext {
+	blobBaseFee := eip4844.CalcBlobFeeDirectly(chain.Config(), blockMetadata.Timestamp, blockMetadata.ExcessBlobGas)
+	return &vm.BlockContext{
+		CanTransfer: CanTransfer,
+		Transfer:    Transfer,
+		GetHash:     getHashFn(blockMetadata.Number, blockMetadata.ParentHash, chain),
+		Coinbase:    blockMetadata.Coinbase,
+		GasLimit:    blockMetadata.GasLimit,
+		BlockNumber: big.NewInt(int64(blockMetadata.Number)),
+		Time:        blockMetadata.Timestamp,
+		Difficulty:  common.Big0,
+		BaseFee:     &blockMetadata.BaseFeePerGas,
+		BlobBaseFee: blobBaseFee,
+		Random:      &blockMetadata.MixHash,
+	}
 }

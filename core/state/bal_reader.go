@@ -3,13 +3,14 @@ package state
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
-	"sync"
-	"time"
 )
 
 // TODO: probably unnecessary to cache the resolved state object here as it will already be in the db cache?
@@ -137,15 +138,19 @@ func (s *BALReader) initMutatedObjFromDiff(db *StateDB, addr common.Address, a *
 // BALReader provides methods for reading account state from a block access
 // list.  State values returned from the Reader methods must not be modified.
 type BALReader struct {
-	block          *types.Block
+	blockTxCount   int
 	accesses       map[common.Address]*bal.AccountAccess
 	prestateReader prestateResolver
 }
+type balAccountAccess = *bal.AccountAccess
 
 // NewBALReader constructs a new reader from an access list. db is expected to have been instantiated with a reader.
-func NewBALReader(block *types.Block, db *StateDB) *BALReader {
-	r := &BALReader{accesses: make(map[common.Address]*bal.AccountAccess), block: block}
-	for _, acctDiff := range *block.Body().AccessList {
+func NewBALReader(bal bal.BlockAccessList, blockTxCount int, db *StateDB) *BALReader {
+	r := &BALReader{
+		accesses:     make(map[common.Address]balAccountAccess),
+		blockTxCount: blockTxCount,
+	}
+	for _, acctDiff := range bal {
 		r.accesses[acctDiff.Address] = &acctDiff
 	}
 	r.prestateReader.resolve(db.Reader(), r.ModifiedAccounts())
@@ -166,7 +171,7 @@ func (r *BALReader) ValidateStateReads(allReads bal.StateAccesses) error {
 	// 1. remove any slots from 'allReads' which were written
 	// 2. validate that the read set in the BAL matches 'allReads' exactly
 	for addr, reads := range allReads {
-		balAcctDiff := r.readAccountDiff(addr, len(r.block.Transactions())+2)
+		balAcctDiff := r.readAccountDiff(addr, r.blockTxCount+2)
 		if balAcctDiff != nil {
 			for writeSlot := range balAcctDiff.StorageWrites {
 				delete(reads, writeSlot)
@@ -211,7 +216,7 @@ func (r *BALReader) AccessedState() (res map[common.Address]map[common.Hash]stru
 // TODO: it feels weird that this modifies the prestate instance. However, it's needed because it will
 // subsequently be used in Commit.
 func (r *BALReader) StateRoot(prestate *StateDB) (root common.Hash, prestateLoadTime time.Duration, rootUpdateTime time.Duration) {
-	lastIdx := len(r.block.Transactions()) + 1
+	lastIdx := r.blockTxCount + 1
 	modifiedAccts := r.ModifiedAccounts()
 	startPrestateLoad := time.Now()
 	for _, addr := range modifiedAccts {

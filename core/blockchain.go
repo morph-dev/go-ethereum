@@ -43,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -335,6 +336,7 @@ type BlockChain struct {
 	bodyRLPCache  *lru.Cache[common.Hash, rlp.RawValue]
 	receiptsCache *lru.Cache[common.Hash, []*types.Receipt] // Receipts cache with all fields derived
 	blockCache    *lru.Cache[common.Hash, *types.Block]
+	chunkCache    *lru.Cache[common.Hash, *types.BlockChunks]
 
 	txLookupLock  sync.RWMutex
 	txLookupCache *lru.Cache[common.Hash, txLookup]
@@ -394,6 +396,7 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 		bodyRLPCache:  lru.NewCache[common.Hash, rlp.RawValue](bodyCacheLimit),
 		receiptsCache: lru.NewCache[common.Hash, []*types.Receipt](receiptsCacheLimit),
 		blockCache:    lru.NewCache[common.Hash, *types.Block](blockCacheLimit),
+		chunkCache:    lru.NewCache[common.Hash, *types.BlockChunks](blockCacheLimit),
 		txLookupCache: lru.NewCache[common.Hash, txLookup](txLookupCacheLimit),
 		engine:        engine,
 		logger:        cfg.VmConfig.Tracer,
@@ -2939,4 +2942,114 @@ func (bc *BlockChain) GetTrieFlushInterval() time.Duration {
 // StateSizer returns the state size tracker, or nil if it's not initialized
 func (bc *BlockChain) StateSizer() *state.SizeTracker {
 	return bc.stateSizer
+}
+
+func (bc *BlockChain) insertChunkHeader(parent common.Hash, chunkHeader *types.ChunkHeader) (*types.PendingChunk, error) {
+	chunks, present := bc.chunkCache.Get(parent)
+	if !present {
+		log.Debug("Creating new BlockChunks", "parent", parent)
+		chunks = &types.BlockChunks{
+			Chunks: [16]*types.PendingChunk{},
+		}
+		bc.chunkCache.Add(parent, chunks)
+	} else {
+		log.Debug("BlockChunks already exists", "parent", parent)
+	}
+
+	chunkIndex := chunkHeader.ChunkIndex
+	if chunks.Chunks[chunkIndex] == nil {
+		log.Debug("Creating new PendingChunk", "parent", parent, "chunk_index", chunkIndex)
+		chunks.Chunks[chunkIndex] = &types.PendingChunk{
+			Header: *chunkHeader,
+		}
+	} else {
+		log.Debug("PendingChunk already exists", "parent", parent, "chunk_index", chunkIndex)
+		if chunks.Chunks[chunkIndex].Header.Hash() != chunkHeader.Hash() {
+			return nil, fmt.Errorf("mismatched chunk, parent=%v chunkIndex=%v", parent, chunkIndex)
+		}
+	}
+	return chunks.Chunks[chunkIndex], nil
+}
+
+func (bc *BlockChain) InsertChunkAccessList(parent common.Hash, chunkHeader *types.ChunkHeader, cal bal.BlockAccessList) bool {
+	chunk, err := bc.insertChunkHeader(parent, chunkHeader)
+	if err != nil {
+		log.Error("Error inserting CAL", "err", err)
+		return false
+	}
+
+	if chunk.ChunkAccessLists != nil {
+		log.Warn(
+			"CAL already known! Overriding",
+			"parent", parent,
+			"chunkIndex", chunkHeader.ChunkIndex,
+			"knownCal", chunk.ChunkAccessLists.Hash(),
+			"newCal", cal.Hash(),
+		)
+	}
+	chunk.ChunkAccessLists = cal
+
+	return true
+}
+
+func (bc *BlockChain) InsertChunk(
+	blockMetadata *types.ChunkBlockMetadata,
+	chunkHeader *types.ChunkHeader,
+	transactions types.Transactions,
+	withdrawals types.Withdrawals,
+) (*ProcessResult, error) {
+	chunk, err := bc.insertChunkHeader(blockMetadata.ParentHash, chunkHeader)
+	if err != nil {
+		return nil, err
+	}
+
+	if chunk.Transactions != nil {
+		log.Warn(
+			"Chunk transactions already known! Overriding",
+			"parent", blockMetadata.ParentHash,
+			"chunkIndex", chunkHeader.ChunkIndex,
+		)
+	}
+	chunk.Transactions = transactions
+
+	if chunk.Withdrawals != nil {
+		log.Warn(
+			"Chunk withdrawals already known! Overriding",
+			"parent", blockMetadata.ParentHash,
+			"chunkIndex", chunkHeader.ChunkIndex,
+		)
+	}
+	chunk.Withdrawals = withdrawals
+
+	chunk.Valid = false
+
+	cal := chunk.ChunkAccessLists
+	if cal == nil {
+		return nil, fmt.Errorf("missing ChunkAccessList for chunk %v", chunkHeader.ChunkIndex)
+	}
+
+	parent := bc.GetHeader(blockMetadata.ParentHash, blockMetadata.Number-1)
+	if parent == nil {
+		return nil, fmt.Errorf("parent header not found: %v", blockMetadata.ParentHash)
+	}
+
+	statedb, err := state.New(parent.Root, bc.statedb)
+	if err != nil {
+		return nil, err
+	}
+
+	resWithMetrics, err := bc.parallelProcessor.ProcessChunk(
+		blockMetadata,
+		chunkHeader,
+		transactions,
+		withdrawals,
+		cal,
+		statedb,
+		bc.cfg.VmConfig,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return resWithMetrics.ProcessResult, nil
 }

@@ -171,11 +171,14 @@ func calcExcessBlobGas(isOsaka bool, bcfg *BlobConfig, parent *types.Header) uin
 
 // CalcBlobFee calculates the blobfee from the header's excess blob gas field.
 func CalcBlobFee(config *params.ChainConfig, header *types.Header) *big.Int {
-	blobConfig := latestBlobConfig(config, header.Time)
+	return CalcBlobFeeDirectly(config, header.Time, *header.ExcessBlobGas)
+}
+func CalcBlobFeeDirectly(config *params.ChainConfig, blockTimestamp uint64, excessBlobGas uint64) *big.Int {
+	blobConfig := latestBlobConfig(config, blockTimestamp)
 	if blobConfig == nil {
 		panic("calculating blob fee on unsupported fork")
 	}
-	return blobConfig.blobBaseFee(*header.ExcessBlobGas)
+	return blobConfig.blobBaseFee(excessBlobGas)
 }
 
 // MaxBlobsPerBlock returns the max blobs per block for a block at the given timestamp.

@@ -32,6 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/internal/version"
@@ -536,9 +537,12 @@ func (api *ConsensusAPI) GetChunksV1(payloadID engine.PayloadID, finalize bool) 
 		BlockMetadata: types.ChunkBlockMetadata{
 			ParentHash:       block.ParentHash(),
 			Number:           block.NumberU64(),
+			Coinbase:         block.Coinbase(),
+			GasLimit:         block.GasLimit(),
 			Timestamp:        block.Time(),
 			MixHash:          block.MixDigest(),
 			BaseFeePerGas:    *block.BaseFee(),
+			ExcessBlobGas:    *block.ExcessBlobGas(),
 			ParentBeaconRoot: *block.BeaconRoot(),
 		},
 		Chunks: engine.CreateChunkPayload(block, finalize, payloadResult.Sidecars, payloadResult.Requests),
@@ -911,6 +915,37 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 		*ow, _ = rlp.EncodeToBytes(proofs)
 	}
 	return engine.PayloadStatusV1{Status: engine.VALID, Witness: ow, LatestValidHash: &hash}, nil
+}
+
+func (api *ConsensusAPI) NewChunkAccessList(parentHash common.Hash, chunkHeader types.ChunkHeader, cal bal.BlockAccessList) (engine.PayloadStatusV1, error) {
+	if api.eth.BlockChain().InsertChunkAccessList(parentHash, &chunkHeader, cal) {
+		return engine.PayloadStatusV1{Status: engine.ACCEPTED}, nil
+	} else {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, nil
+	}
+}
+
+func (api *ConsensusAPI) ExecuteChunk(blockMetadata *types.ChunkBlockMetadata, chunk engine.ExecutionChunk) (engine.PayloadStatusV1, error) {
+	parent := api.eth.BlockChain().GetBlock(blockMetadata.ParentHash, blockMetadata.Number-1)
+	if parent == nil {
+		return engine.PayloadStatusV1{Status: engine.SYNCING}, nil
+	}
+	if blockMetadata.Timestamp <= parent.Time() {
+		log.Warn("Invalid timestamp", "parent", parent.Time(), "chunk", blockMetadata.Timestamp)
+		return api.invalid(errors.New("invalid timestamp"), parent.Header()), nil
+	}
+
+	if !api.eth.BlockChain().HasBlockAndState(blockMetadata.ParentHash, blockMetadata.Number-1) {
+		err := fmt.Errorf("state not available for parent %v", blockMetadata.ParentHash)
+		return engine.PayloadStatusV1{Status: engine.INVALID}, err
+	}
+
+	_, err := api.eth.BlockChain().InsertChunk(blockMetadata, &chunk.Header, chunk.Transactions, chunk.Withdrawals)
+	if err != nil {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, err
+	}
+
+	return engine.PayloadStatusV1{Status: engine.VALID}, nil
 }
 
 // delayPayloadImport stashes the given block away for import at a later time,

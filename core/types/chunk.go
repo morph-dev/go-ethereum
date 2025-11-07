@@ -5,16 +5,33 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/params"
 )
 
+type PendingChunk struct {
+	Header           ChunkHeader
+	Transactions     Transactions
+	Withdrawals      Withdrawals
+	ChunkAccessLists bal.BlockAccessList
+	Valid            bool
+}
+
+type BlockChunks struct {
+	BlockMetadata *ChunkBlockMetadata
+	Chunks        [params.MaxChunksPerBlock]*PendingChunk
+}
+
 type ChunkBlockMetadata struct {
-	ParentHash       common.Hash `json:"parentHash"`
-	Number           uint64      `json:"number"`
-	Timestamp        uint64      `json:"timestamp"`
-	MixHash          common.Hash `json:"mixHash"`
-	BaseFeePerGas    big.Int     `json:"baseFeePerGas"`
-	ParentBeaconRoot common.Hash `json:"parentBeaconBlockRoot"`
+	ParentHash       common.Hash    `json:"parentHash"`
+	Coinbase         common.Address `json:"miner"`
+	Number           uint64         `json:"number"`
+	GasLimit         uint64         `json:"gasLimit"`
+	Timestamp        uint64         `json:"timestamp"`
+	MixHash          common.Hash    `json:"mixHash"`
+	BaseFeePerGas    big.Int        `json:"baseFeePerGas"`
+	ExcessBlobGas    uint64         `json:"excessBlobGas"`
+	ParentBeaconRoot common.Hash    `json:"parentBeaconBlockRoot"`
 }
 
 type ChunkHeader struct {
@@ -35,6 +52,10 @@ type ChunkHeader struct {
 	// Bloom               Bloom       `json:"logsBloom"`
 	// PostStateRoot       common.Hash `json:"postStateRoot"`
 	// ParentBeaconRoot    common.Hash `json:"parentBeaconBlockRoot"`
+}
+
+func (h *ChunkHeader) Hash() common.Hash {
+	return rlpHash(h)
 }
 
 type ChunkTransactions struct {

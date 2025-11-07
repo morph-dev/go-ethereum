@@ -426,6 +426,12 @@ func (v *ClientVersionV1) String() string {
 	return fmt.Sprintf("%s-%s-%s-%s", v.Code, v.Name, v.Version, v.Commit)
 }
 
+type ExecutionChunk struct {
+	Header       types.ChunkHeader
+	Transactions types.Transactions
+	Withdrawals  types.Withdrawals
+}
+
 type ChunkPayload struct {
 	Header       *types.ChunkHeader   `json:"header"`
 	Transactions [][]byte             `json:"transactions"`

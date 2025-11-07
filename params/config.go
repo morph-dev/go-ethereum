@@ -1167,8 +1167,7 @@ func (c *ChainConfig) LatestFork(time uint64) forks.Fork {
 func (c *ChainConfig) BlobConfig(fork forks.Fork) *BlobConfig {
 	switch fork {
 	case forks.Amsterdam:
-		// TODO: (????)
-		return c.BlobScheduleConfig.BPO2
+		return c.BlobScheduleConfig.Amsterdam
 	case forks.BPO5:
 		return c.BlobScheduleConfig.BPO5
 	case forks.BPO4:
