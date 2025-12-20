@@ -15,12 +15,13 @@ var _ = (*executionPayloadEnvelopeMarshaling)(nil)
 // MarshalJSON marshals as JSON.
 func (e ExecutionPayloadEnvelope) MarshalJSON() ([]byte, error) {
 	type ExecutionPayloadEnvelope struct {
-		ExecutionPayload *ExecutableData `json:"executionPayload"  gencodec:"required"`
-		BlockValue       *hexutil.Big    `json:"blockValue"  gencodec:"required"`
-		BlobsBundle      *BlobsBundle    `json:"blobsBundle"`
-		Requests         []hexutil.Bytes `json:"executionRequests"`
-		Override         bool            `json:"shouldOverrideBuilder"`
-		Witness          *hexutil.Bytes  `json:"witness,omitempty"`
+		ExecutionPayload *ExecutableData         `json:"executionPayload"  gencodec:"required"`
+		BlockValue       *hexutil.Big            `json:"blockValue"  gencodec:"required"`
+		BlobsBundle      *BlobsBundle            `json:"blobsBundle"`
+		Requests         []hexutil.Bytes         `json:"executionRequests"`
+		Override         bool                    `json:"shouldOverrideBuilder"`
+		Witness          *hexutil.Bytes          `json:"witness,omitempty"`
+		Chunks           []ExecutionChunkWithCal `json:"chunks"`
 	}
 	var enc ExecutionPayloadEnvelope
 	enc.ExecutionPayload = e.ExecutionPayload
@@ -34,18 +35,20 @@ func (e ExecutionPayloadEnvelope) MarshalJSON() ([]byte, error) {
 	}
 	enc.Override = e.Override
 	enc.Witness = e.Witness
+	enc.Chunks = e.Chunks
 	return json.Marshal(&enc)
 }
 
 // UnmarshalJSON unmarshals from JSON.
 func (e *ExecutionPayloadEnvelope) UnmarshalJSON(input []byte) error {
 	type ExecutionPayloadEnvelope struct {
-		ExecutionPayload *ExecutableData `json:"executionPayload"  gencodec:"required"`
-		BlockValue       *hexutil.Big    `json:"blockValue"  gencodec:"required"`
-		BlobsBundle      *BlobsBundle    `json:"blobsBundle"`
-		Requests         []hexutil.Bytes `json:"executionRequests"`
-		Override         *bool           `json:"shouldOverrideBuilder"`
-		Witness          *hexutil.Bytes  `json:"witness,omitempty"`
+		ExecutionPayload *ExecutableData         `json:"executionPayload"  gencodec:"required"`
+		BlockValue       *hexutil.Big            `json:"blockValue"  gencodec:"required"`
+		BlobsBundle      *BlobsBundle            `json:"blobsBundle"`
+		Requests         []hexutil.Bytes         `json:"executionRequests"`
+		Override         *bool                   `json:"shouldOverrideBuilder"`
+		Witness          *hexutil.Bytes          `json:"witness,omitempty"`
+		Chunks           []ExecutionChunkWithCal `json:"chunks"`
 	}
 	var dec ExecutionPayloadEnvelope
 	if err := json.Unmarshal(input, &dec); err != nil {
@@ -73,6 +76,9 @@ func (e *ExecutionPayloadEnvelope) UnmarshalJSON(input []byte) error {
 	}
 	if dec.Witness != nil {
 		e.Witness = dec.Witness
+	}
+	if dec.Chunks != nil {
+		e.Chunks = dec.Chunks
 	}
 	return nil
 }

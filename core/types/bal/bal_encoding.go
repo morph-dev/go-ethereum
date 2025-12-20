@@ -458,7 +458,7 @@ func (c *AccessListBuilder) ToEncodingObj() *BlockAccessList {
 
 	var res BlockAccessList
 	for _, addr := range addresses {
-		res = append(res, c.FinalizedAccesses[addr].toEncodingObj(addr))
+		res = append(res, c.FinalizedAccesses[addr].toEncodingCalObj(addr, 0, ^uint16(0)))
 	}
 	return &res
 }

@@ -1527,7 +1527,7 @@ func TestBlockToPayloadWithBlobs(t *testing.T) {
 	sidecars := []*types.BlobTxSidecar{sidecar}
 
 	block := types.NewBlock(&header, &types.Body{Transactions: txs}, nil, trie.NewStackTrie(nil))
-	envelope := engine.BlockToExecutableData(block, nil, sidecars, nil)
+	envelope := engine.BlockToExecutableData(block, nil, nil, sidecars, nil)
 	var want int
 	for _, tx := range txs {
 		want += len(tx.BlobHashes())

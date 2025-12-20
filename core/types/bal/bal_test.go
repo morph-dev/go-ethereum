@@ -49,8 +49,8 @@ func makeTestConstructionBAL() *AccessListBuilder {
 						20: common.BytesToHash([]byte{1, 2, 3, 4}),
 					},
 				},
-				StorageReads: map[common.Hash]struct{}{
-					common.BytesToHash([]byte{1, 2, 3, 4, 5, 6, 7}): {},
+				StorageReads: map[common.Hash]uint16{
+					common.BytesToHash([]byte{1, 2, 3, 4, 5, 6, 7}): 1,
 				},
 				BalanceChanges: map[uint16]*uint256.Int{
 					1: uint256.NewInt(100),
@@ -75,8 +75,8 @@ func makeTestConstructionBAL() *AccessListBuilder {
 						21: common.BytesToHash([]byte{1, 2, 3, 4, 5}),
 					},
 				},
-				StorageReads: map[common.Hash]struct{}{
-					common.BytesToHash([]byte{1, 2, 3, 4, 5, 6, 7, 8}): {},
+				StorageReads: map[common.Hash]uint16{
+					common.BytesToHash([]byte{1, 2, 3, 4, 5, 6, 7, 8}): 3,
 				},
 				BalanceChanges: map[uint16]*uint256.Int{
 					2: uint256.NewInt(100),

@@ -18,9 +18,10 @@ package engine
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/types/bal"
 	"math/big"
 	"slices"
+
+	"github.com/ethereum/go-ethereum/core/types/bal"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -94,6 +95,11 @@ type ExecutableData struct {
 	ExcessBlobGas    *uint64                 `json:"excessBlobGas"`
 	BlockAccessList  *bal.BlockAccessList    `json:"blockAccessList"`
 	ExecutionWitness *types.ExecutionWitness `json:"executionWitness,omitempty"`
+
+	// EIP-8101: new fields
+	TxHash              *common.Hash `json:"txHash"`
+	WithdrawalsRoot     *common.Hash `json:"withdrawalsRoot"`
+	BlockAccessListHash *common.Hash `json:"blockAccessListHash"`
 }
 
 // JSON type overrides for executableData.
@@ -127,6 +133,9 @@ type ExecutionPayloadEnvelope struct {
 	Requests         [][]byte        `json:"executionRequests"`
 	Override         bool            `json:"shouldOverrideBuilder"`
 	Witness          *hexutil.Bytes  `json:"witness,omitempty"`
+
+	// EIP-8101: new fields
+	Chunks []ExecutionChunkWithCal `json:"chunks"`
 }
 
 // BlobsBundle includes the marshalled sidecar data. Note this structure is
@@ -335,7 +344,7 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 
 // BlockToExecutableData constructs the ExecutableData structure by filling the
 // fields from the given block. It assumes the given block is post-merge block.
-func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.BlobTxSidecar, requests [][]byte) *ExecutionPayloadEnvelope {
+func BlockToExecutableData(block *types.Block, chunks types.Chunks, fees *big.Int, sidecars []*types.BlobTxSidecar, requests [][]byte) *ExecutionPayloadEnvelope {
 	data := &ExecutableData{
 		BlockHash:        block.Hash(),
 		ParentHash:       block.ParentHash(),
@@ -348,14 +357,35 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 		Timestamp:        block.Time(),
 		ReceiptsRoot:     block.ReceiptHash(),
 		LogsBloom:        block.Bloom().Bytes(),
-		Transactions:     encodeTransactions(block.Transactions()),
 		Random:           block.MixDigest(),
 		ExtraData:        block.Extra(),
-		Withdrawals:      block.Withdrawals(),
 		BlobGasUsed:      block.BlobGasUsed(),
 		ExcessBlobGas:    block.ExcessBlobGas(),
 		ExecutionWitness: block.ExecutionWitness(),
-		BlockAccessList:  block.Body().AccessList,
+	}
+
+	var executionChunks []ExecutionChunkWithCal
+	if chunks == nil {
+		data.Transactions = encodeTransactions(block.Transactions())
+		data.Withdrawals = block.Withdrawals()
+		data.BlockAccessList = block.Body().AccessList
+	} else {
+		data.Transactions = encodeTransactions(nil)
+
+		data.TxHash = &block.Header().TxHash
+		data.WithdrawalsRoot = block.Header().WithdrawalsHash
+		blockAccessListHash := block.Body().AccessList.Hash()
+		data.BlockAccessListHash = &blockAccessListHash
+
+		executionChunks = make([]ExecutionChunkWithCal, 0, len(chunks))
+		for _, chunk := range chunks {
+			executionChunks = append(executionChunks, ExecutionChunkWithCal{
+				ChunkHeader:     chunk.ChunkHeader,
+				Transactions:    encodeTransactions(chunk.Transactions),
+				Withdrawals:     chunk.Withdrawals,
+				ChunkAccessList: chunk.Cal,
+			})
+		}
 	}
 
 	// Add blobs.
@@ -389,6 +419,7 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 		BlobsBundle:      &bundle,
 		Requests:         requests,
 		Override:         false,
+		Chunks:           executionChunks,
 	}
 }
 
@@ -414,4 +445,24 @@ type ClientVersionV1 struct {
 
 func (v *ClientVersionV1) String() string {
 	return fmt.Sprintf("%s-%s-%s-%s", v.Code, v.Name, v.Version, v.Commit)
+}
+
+type ExecutionChunk struct {
+	ChunkHeader  types.ChunkHeader   `json:"chunkHeader"`
+	Transactions [][]byte            `json:"transactions"`
+	Withdrawals  []*types.Withdrawal `json:"withdrawals"`
+}
+
+//go:generate go run github.com/fjl/gencodec -type ExecutionChunk -field-override executionChunkMarshaling -out gen_chunk.go
+
+type ExecutionChunkWithCal struct {
+	ChunkHeader     types.ChunkHeader    `json:"chunkHeader"`
+	Transactions    [][]byte             `json:"transactions"`
+	Withdrawals     []*types.Withdrawal  `json:"withdrawals"`
+	ChunkAccessList *bal.BlockAccessList `json:"cal"`
+}
+
+// JSON type overrides for ExecutionChunk.
+type executionChunkMarshaling struct {
+	Transactions []hexutil.Bytes
 }

@@ -20,12 +20,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/holiman/uint256"
 	"log/slog"
 	"maps"
 	"slices"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/holiman/uint256"
 )
 
 // idxAccessListBuilder is responsible for producing the state accesses and
@@ -252,7 +253,7 @@ func (c *AccessListBuilder) FinaliseIdxChanges(idx uint16) {
 	for addr, pendingAcctDiff := range pendingDiff.Mutations {
 		finalizedAcctChanges, ok := c.FinalizedAccesses[addr]
 		if !ok {
-			finalizedAcctChanges = &ConstructionAccountAccesses{}
+			finalizedAcctChanges = &ConstructionAccountAccesses{firstIdx: idx}
 			c.FinalizedAccesses[addr] = finalizedAcctChanges
 		}
 
@@ -283,16 +284,6 @@ func (c *AccessListBuilder) FinaliseIdxChanges(idx uint16) {
 					finalizedAcctChanges.StorageWrites[key] = make(map[uint16]common.Hash)
 				}
 				finalizedAcctChanges.StorageWrites[key][idx] = val
-
-				// if any of the newly-written storage slots were previously
-				// accessed, they must be removed from the accessed state set.
-
-				// TODO: commenting this 'if' results in no test failures.
-				// double-check that this edge-case was fixed by a future
-				// release of the eest BAL tests.
-				if _, ok := finalizedAcctChanges.StorageReads[key]; ok {
-					delete(finalizedAcctChanges.StorageReads, key)
-				}
 			}
 		}
 	}
@@ -301,7 +292,7 @@ func (c *AccessListBuilder) FinaliseIdxChanges(idx uint16) {
 	for addr, pendingAccountAccesses := range pendingAccesses {
 		finalizedAcctAccesses, ok := c.FinalizedAccesses[addr]
 		if !ok {
-			finalizedAcctAccesses = &ConstructionAccountAccesses{}
+			finalizedAcctAccesses = &ConstructionAccountAccesses{firstIdx: idx}
 			c.FinalizedAccesses[addr] = finalizedAcctAccesses
 		}
 
@@ -310,9 +301,12 @@ func (c *AccessListBuilder) FinaliseIdxChanges(idx uint16) {
 				continue
 			}
 			if finalizedAcctAccesses.StorageReads == nil {
-				finalizedAcctAccesses.StorageReads = make(map[common.Hash]struct{})
+				finalizedAcctAccesses.StorageReads = make(map[common.Hash]uint16)
 			}
-			finalizedAcctAccesses.StorageReads[key] = struct{}{}
+			// Save in StorageReads if it is not already there (e.g. from earlier tx)
+			if _, present := finalizedAcctAccesses.StorageReads[key]; !present {
+				finalizedAcctAccesses.StorageReads[key] = idx
+			}
 		}
 	}
 	c.lastFinalizedMutations = pendingDiff
@@ -365,11 +359,10 @@ type ConstructionAccountAccesses struct {
 	StorageWrites map[common.Hash]map[uint16]common.Hash
 
 	// StorageReads is the set of slot keys that were accessed during block
-	// execution.
+	// execution. The value represents the first tx index that slot was accessed.
 	//
-	// storage slots which are both read and written (with changed values)
-	// appear only in StorageWrites.
-	StorageReads map[common.Hash]struct{}
+	// Storage slots which are both read and written can appear in both lists.
+	StorageReads map[common.Hash]uint16
 
 	// BalanceChanges contains the post-transaction balances of an account,
 	// keyed by transaction indices where it was changed.
@@ -380,6 +373,9 @@ type ConstructionAccountAccesses struct {
 	NonceChanges map[uint16]uint64
 
 	CodeChanges map[uint16]CodeChange
+
+	// The first tx index that this account was accessed at.
+	firstIdx uint16
 }
 
 // constructionAccountAccess contains fields for an account which were modified
@@ -516,7 +512,7 @@ func NewAccessListBuilder() *AccessListBuilder {
 func (c *AccessListBuilder) Copy() *AccessListBuilder {
 	res := NewAccessListBuilder()
 	for addr, aa := range c.FinalizedAccesses {
-		var aaCopy ConstructionAccountAccesses
+		aaCopy := ConstructionAccountAccesses{firstIdx: aa.firstIdx}
 
 		slotWrites := make(map[common.Hash]map[uint16]common.Hash, len(aa.StorageWrites))
 		for key, m := range aa.StorageWrites {

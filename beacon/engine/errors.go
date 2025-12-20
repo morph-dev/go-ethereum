@@ -65,6 +65,9 @@ var (
 	//   - forkchoiceUpdateV1: if the new head is unknown, pre-merge, or reorg to it fails
 	INVALID = "INVALID"
 
+	// EIP-8101
+	INSUFFICIENT_INFORMATION = "INSUFFICIENT_INFORMATION"
+
 	// SYNCING is returned by the engine API in the following calls:
 	//   - newPayloadV1:       if the payload was accepted on top of an active sync
 	//   - forkchoiceUpdateV1: if the new head was seen before, but not part of the chain

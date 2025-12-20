@@ -19,10 +19,12 @@ package miner
 import (
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/tracing"
 	"math/big"
 	"sync/atomic"
 	"time"
+
+	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/trie"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
@@ -92,6 +94,7 @@ type newPayloadResult struct {
 	receipts []*types.Receipt       // Receipts collected during construction
 	requests [][]byte               // Consensus layer requests collected during block construction
 	witness  *stateless.Witness     // Witness is an optional stateless proof
+	chunks   types.Chunks
 }
 
 // generateParams wraps various settings for generating sealing task.
@@ -167,6 +170,8 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 		work.header.RequestsHash = &reqHash
 	}
 
+	var chunks types.Chunks = nil
+
 	// set the block access list on the body after the block has finished executing
 	// but before the header hash is computed (in FinalizeAndAssemble).
 	//
@@ -177,6 +182,9 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 		if miner.chainConfig.IsAmsterdam(work.header.Number, work.header.Time) {
 			work.alTracer.OnBlockFinalization()
 			body.AccessList = work.alTracer.AccessList().ToEncodingObj()
+
+			hasher := trie.NewStackTrie(nil)
+			chunks = types.CreateChunks(body.Transactions, work.receipts, body.Withdrawals, *work.alTracer.AccessList(), hasher)
 		}
 	}
 
@@ -193,6 +201,7 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 		receipts: work.receipts,
 		requests: requests,
 		witness:  work.witness,
+		chunks:   chunks,
 	}
 }
 

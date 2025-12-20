@@ -72,8 +72,10 @@ type Payload struct {
 	id            engine.PayloadID
 	empty         *types.Block
 	emptyWitness  *stateless.Witness
+	emptyChunks   types.Chunks
 	full          *types.Block
 	fullWitness   *stateless.Witness
+	fullChunks    types.Chunks
 	sidecars      []*types.BlobTxSidecar
 	emptyRequests [][]byte
 	requests      [][]byte
@@ -84,12 +86,13 @@ type Payload struct {
 }
 
 // newPayload initializes the payload object.
-func newPayload(empty *types.Block, emptyRequests [][]byte, witness *stateless.Witness, id engine.PayloadID) *Payload {
+func newPayload(empty *types.Block, emptyRequests [][]byte, witness *stateless.Witness, chunks types.Chunks, id engine.PayloadID) *Payload {
 	payload := &Payload{
 		id:            id,
 		empty:         empty,
 		emptyRequests: emptyRequests,
 		emptyWitness:  witness,
+		emptyChunks:   chunks,
 		stop:          make(chan struct{}),
 	}
 	log.Info("Starting work on payload", "id", payload.id)
@@ -116,6 +119,7 @@ func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) {
 		payload.sidecars = r.sidecars
 		payload.requests = r.requests
 		payload.fullWitness = r.witness
+		payload.fullChunks = r.chunks
 
 		feesInEther := new(big.Float).Quo(new(big.Float).SetInt(r.fees), big.NewFloat(params.Ether))
 		log.Info("Updated payload",
@@ -124,6 +128,8 @@ func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) {
 			"hash", r.block.Hash(),
 			"txs", len(r.block.Transactions()),
 			"withdrawals", len(r.block.Withdrawals()),
+			"bal", r.block.Header().BlockAccessListHash,
+			"chunks", len(r.chunks),
 			"gas", r.block.GasUsed(),
 			"fees", feesInEther,
 			"root", r.block.Root(),
@@ -145,14 +151,14 @@ func (payload *Payload) Resolve() *engine.ExecutionPayloadEnvelope {
 		close(payload.stop)
 	}
 	if payload.full != nil {
-		envelope := engine.BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars, payload.requests)
+		envelope := engine.BlockToExecutableData(payload.full, payload.fullChunks, payload.fullFees, payload.sidecars, payload.requests)
 		if payload.fullWitness != nil {
 			envelope.Witness = new(hexutil.Bytes)
 			*envelope.Witness, _ = rlp.EncodeToBytes(payload.fullWitness) // cannot fail
 		}
 		return envelope
 	}
-	envelope := engine.BlockToExecutableData(payload.empty, big.NewInt(0), nil, payload.emptyRequests)
+	envelope := engine.BlockToExecutableData(payload.empty, payload.emptyChunks, big.NewInt(0), nil, payload.emptyRequests)
 	if payload.emptyWitness != nil {
 		envelope.Witness = new(hexutil.Bytes)
 		*envelope.Witness, _ = rlp.EncodeToBytes(payload.emptyWitness) // cannot fail
@@ -166,7 +172,7 @@ func (payload *Payload) ResolveEmpty() *engine.ExecutionPayloadEnvelope {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
 
-	envelope := engine.BlockToExecutableData(payload.empty, big.NewInt(0), nil, payload.emptyRequests)
+	envelope := engine.BlockToExecutableData(payload.empty, payload.emptyChunks, big.NewInt(0), nil, payload.emptyRequests)
 	if payload.emptyWitness != nil {
 		envelope.Witness = new(hexutil.Bytes)
 		*envelope.Witness, _ = rlp.EncodeToBytes(payload.emptyWitness) // cannot fail
@@ -197,7 +203,7 @@ func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
 	default:
 		close(payload.stop)
 	}
-	envelope := engine.BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars, payload.requests)
+	envelope := engine.BlockToExecutableData(payload.full, payload.fullChunks, payload.fullFees, payload.sidecars, payload.requests)
 	if payload.fullWitness != nil {
 		envelope.Witness = new(hexutil.Bytes)
 		*envelope.Witness, _ = rlp.EncodeToBytes(payload.fullWitness) // cannot fail
@@ -225,7 +231,7 @@ func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload
 		return nil, empty.err
 	}
 	// Construct a payload object for return.
-	payload := newPayload(empty.block, empty.requests, empty.witness, args.Id())
+	payload := newPayload(empty.block, empty.requests, empty.witness, empty.chunks, args.Id())
 
 	// Spin up a routine for updating the payload in background. This strategy
 	// can maximum the revenue for including transactions with highest fee.
