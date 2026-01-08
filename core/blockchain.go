@@ -358,6 +358,8 @@ type BlockChain struct {
 	logger             *tracing.Hooks
 	stateSizer         *state.SizeTracker // State size tracking
 	lastForkReadyAlert time.Time          // Last time there was a fork readiness print out
+
+	blockChunkValidator *lru.Cache[common.Hash, *BlockChunkValidator] // EIP-8101
 }
 
 // NewBlockChain returns a fully initialised block chain using information
@@ -405,6 +407,9 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 		txLookupCache: lru.NewCache[common.Hash, txLookup](txLookupCacheLimit),
 		engine:        engine,
 		logger:        cfg.VmConfig.Tracer,
+
+		// EIP-8101
+		blockChunkValidator: lru.NewCache[common.Hash, *BlockChunkValidator](blockCacheLimit),
 	}
 	bc.hc, err = NewHeaderChain(db, chainConfig, engine, bc.insertStopped)
 	if err != nil {
@@ -2020,7 +2025,7 @@ func (bc *BlockChain) processBlockWithAccessList(parentRoot common.Hash, block *
 		return nil, err
 	}
 
-	stateReader := state.NewBALReader(block, reader)
+	stateReader := state.NewBALReader(block.Transactions().Len(), *block.Body().AccessList, reader)
 	stateTransition, err := state.NewBALStateTransition(stateReader, bc.statedb, parentRoot)
 	if err != nil {
 		return nil, err

@@ -1,6 +1,11 @@
 package state
 
 import (
+	"maps"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/types/bal"
@@ -9,10 +14,6 @@ import (
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/holiman/uint256"
 	"golang.org/x/sync/errgroup"
-	"maps"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 // BALStateTransition is responsible for performing the state root update
@@ -359,7 +360,7 @@ func (s *BALStateTransition) CommitWithUpdate(block uint64, deleteEmptyObjects b
 }
 
 func (s *BALStateTransition) loadOriginStorages() {
-	lastIdx := len(s.accessList.block.Transactions()) + 1
+	lastIdx := s.accessList.txCount + 1
 
 	type originStorage struct {
 		address common.Address
@@ -425,7 +426,7 @@ func (s *BALStateTransition) IntermediateRoot(_ bool) common.Hash {
 	// Steps 1/2 are performed sequentially, with steps 1a-d performed in parallel
 
 	start := time.Now()
-	lastIdx := len(s.accessList.block.Transactions()) + 1
+	lastIdx := s.accessList.txCount + 1
 
 	//1 (b): load the origin storage values for all slots which were modified during the block
 	s.originStoragesWG.Add(1)

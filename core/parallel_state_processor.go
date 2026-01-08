@@ -3,15 +3,16 @@ package core
 import (
 	"cmp"
 	"fmt"
+	"runtime"
+	"slices"
+	"time"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"golang.org/x/sync/errgroup"
-	"runtime"
-	"slices"
-	"time"
 )
 
 // ProcessResultWithMetrics wraps ProcessResult with some metrics that are
@@ -245,8 +246,7 @@ func (p *ParallelStateProcessor) calcAndVerifyRoot(preState *state.StateDB, bloc
 }
 
 // execTx executes single transaction returning a result which includes state accessed/modified
-func (p *ParallelStateProcessor) execTx(block *types.Block, tx *types.Transaction, txIdx int, db *state.StateDB, signer types.Signer) *txExecResult {
-	header := block.Header()
+func (p *ParallelStateProcessor) execTx(header *types.Header, tx *types.Transaction, txIdx int, db *state.StateDB, signer types.Signer) *txExecResult {
 	balTracer, hooks := NewBlockAccessListTracer()
 	tracingStateDB := state.NewHookedState(db, hooks)
 	context := NewEVMBlockContext(header, p.chain, nil)
@@ -268,10 +268,10 @@ func (p *ParallelStateProcessor) execTx(block *types.Block, tx *types.Transactio
 		return &txExecResult{err: err}
 	}
 	gp := new(GasPool)
-	gp.SetGas(block.GasLimit())
+	gp.SetGas(header.GasLimit)
 	db.SetTxContext(tx.Hash(), txIdx)
 	var gasUsed uint64
-	receipt, err := ApplyTransactionWithEVM(msg, gp, db, block.Number(), block.Hash(), context.Time, tx, &gasUsed, evm)
+	receipt, err := ApplyTransactionWithEVM(msg, gp, db, header.Number, header.Hash(), context.Time, tx, &gasUsed, evm)
 	if err != nil {
 		err := fmt.Errorf("could not apply tx %d [%v]: %w", txIdx, tx.Hash().Hex(), err)
 		return &txExecResult{err: err}
@@ -340,7 +340,7 @@ func (p *ParallelStateProcessor) Process(block *types.Block, stateTransition *st
 		tx := tx
 		i := i
 		workers.Go(func() error {
-			res := p.execTx(block, tx, i, startingState.Copy(), signer)
+			res := p.execTx(header, tx, i, startingState.Copy(), signer)
 			txResCh <- *res
 			return nil
 		})

@@ -775,7 +775,7 @@ func (s *StateDB) Copy() *StateDB {
 		refund:               s.refund,
 		thash:                s.thash,
 		txIndex:              s.txIndex,
-		balIndex:             s.txIndex,
+		balIndex:             s.balIndex,
 		logs:                 make(map[common.Hash][]*types.Log, len(s.logs)),
 		logSize:              s.logSize,
 		preimages:            maps.Clone(s.preimages),

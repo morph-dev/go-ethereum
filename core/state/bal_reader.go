@@ -3,13 +3,14 @@ package state
 import (
 	"context"
 	"fmt"
+	"sync"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/holiman/uint256"
-	"sync"
 )
 
 // TODO: probably unnecessary to cache the resolved state object here as it will already be in the db cache?
@@ -118,15 +119,18 @@ func (r *BALReader) initObjFromDiff(db *StateDB, addr common.Address, a *types.S
 // BALReader provides methods for reading account state from a block access
 // list.  State values returned from the Reader methods must not be modified.
 type BALReader struct {
-	block          *types.Block
+	txCount        int
 	accesses       map[common.Address]*bal.AccountAccess
 	prestateReader prestateResolver
 }
 
 // NewBALReader constructs a new reader from an access list. db is expected to have been instantiated with a reader.
-func NewBALReader(block *types.Block, reader Reader) *BALReader {
-	r := &BALReader{accesses: make(map[common.Address]*bal.AccountAccess), block: block}
-	for _, acctDiff := range *block.Body().AccessList {
+func NewBALReader(txCount int, blockAccessList bal.BlockAccessList, reader Reader) *BALReader {
+	r := &BALReader{
+		txCount:  txCount,
+		accesses: make(map[common.Address]*bal.AccountAccess),
+	}
+	for _, acctDiff := range blockAccessList {
 		r.accesses[acctDiff.Address] = &acctDiff
 	}
 	r.prestateReader.schedule(reader, r.ModifiedAccounts())
@@ -182,7 +186,7 @@ func (r *BALReader) ValidateStateReads(idx int, computedReads bal.StateAccesses)
 	// 1. remove any slots from 'allReads' which were written
 	// 2. validate that the read set in the BAL matches 'allReads' exactly
 	for addr, reads := range computedReads {
-		balAcctDiff := r.readAccountDiff(addr, len(r.block.Transactions())+2)
+		balAcctDiff := r.readAccountDiff(addr, r.txCount+1)
 		if balAcctDiff != nil {
 			for writeSlot := range balAcctDiff.StorageWrites {
 				delete(reads, writeSlot)
