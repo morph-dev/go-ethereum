@@ -52,11 +52,11 @@ const (
 // Receipt represents the results of a transaction.
 type Receipt struct {
 	// Consensus fields: These fields are defined by the Yellow Paper
-	Type              uint8  `json:"type,omitempty"`
-	PostState         []byte `json:"root"`
-	Status            uint64 `json:"status"`
-	CumulativeGasUsed uint64 `json:"cumulativeGasUsed" gencodec:"required"`
-	Bloom             Bloom  `json:"logsBloom"         gencodec:"required"`
+	Type              uint8           `json:"type,omitempty"`
+	PostState         []byte          `json:"root"`
+	Status            uint64          `json:"status"`
+	CumulativeGasUsed uint64          `json:"cumulativeGasUsed" gencodec:"required"`
+	Bloom             Bloom           `json:"logsBloom"         gencodec:"required"`
 	Logs              []*Log          `json:"logs"              gencodec:"required"`
 	Payer             *common.Address `json:"payer,omitempty"`
 	FrameReceipts     []FrameReceipt  `json:"frameReceipts,omitempty"`
@@ -158,17 +158,6 @@ func (r *Receipt) EncodeRLP(w io.Writer) error {
 }
 
 func (r *Receipt) consensusPayload() any {
-	if r.Type == FrameTxType {
-		payload := &frameTxReceiptRLP{CumulativeGasUsed: r.CumulativeGasUsed}
-		if r.Payer != nil {
-			payload.Payer = *r.Payer
-		}
-		payload.FrameReceipts = make([]frameReceiptRLP, len(r.FrameReceipts))
-		for i, fr := range r.FrameReceipts {
-			payload.FrameReceipts[i] = frameReceiptRLP{Status: fr.Status, GasUsed: fr.GasUsed, Logs: fr.Logs}
-		}
-		return payload
-	}
 	return &receiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs}
 }
 
@@ -250,12 +239,12 @@ func (r *Receipt) decodeTyped(b []byte) error {
 		r.Type = b[0]
 		return r.setFromRLP(data)
 	case FrameTxType:
-		var data frameTxReceiptRLP
+		var data receiptRLP
 		if err := rlp.DecodeBytes(b[1:], &data); err != nil {
 			return err
 		}
 		r.Type = b[0]
-		return r.setFromFrameRLP(data)
+		return r.setFromRLP(data)
 	default:
 		return ErrTxTypeNotSupported
 	}
@@ -404,7 +393,14 @@ type ReceiptForStorage Receipt
 // into an RLP stream.
 func (r *ReceiptForStorage) EncodeRLP(_w io.Writer) error {
 	if r.Type == FrameTxType {
-		payload := (*Receipt)(r).consensusPayload()
+		payload := &frameTxReceiptRLP{CumulativeGasUsed: r.CumulativeGasUsed}
+		if r.Payer != nil {
+			payload.Payer = *r.Payer
+		}
+		payload.FrameReceipts = make([]frameReceiptRLP, len(r.FrameReceipts))
+		for i, fr := range r.FrameReceipts {
+			payload.FrameReceipts[i] = frameReceiptRLP{Status: fr.Status, GasUsed: fr.GasUsed, Logs: fr.Logs}
+		}
 		return rlp.Encode(_w, payload)
 	}
 	w := rlp.NewEncoderBuffer(_w)
@@ -473,10 +469,8 @@ func (rs Receipts) EncodeIndex(i int, w *bytes.Buffer) {
 	}
 	w.WriteByte(r.Type)
 	switch r.Type {
-	case AccessListTxType, DynamicFeeTxType, BlobTxType, SetCodeTxType:
+	case AccessListTxType, DynamicFeeTxType, BlobTxType, SetCodeTxType, FrameTxType:
 		rlp.Encode(w, &receiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs})
-	case FrameTxType:
-		rlp.Encode(w, r.consensusPayload())
 	default:
 		// For unsupported types, write nothing. Since this is for
 		// DeriveSha, the error will be caught matching the derived hash
