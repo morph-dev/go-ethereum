@@ -246,13 +246,17 @@ func MakeReceipt(evm *vm.EVM, result *ExecutionResult, statedb *state.StateDB, b
 	// in the Amsterdam fork.
 	receipt.GasUsed = result.UsedGas
 
-	if tx.Type() == types.BlobTxType {
-		receipt.BlobGasUsed = uint64(len(tx.BlobHashes()) * params.BlobTxBlobGasPerBlob)
+	if tx.BlobGas() > 0 {
+		receipt.BlobGasUsed = tx.BlobGas()
 		receipt.BlobGasPrice = evm.Context.BlobBaseFee
+	}
+	if tx.Type() == types.FrameTxType {
+		receipt.Payer = result.FramePayer
+		receipt.FrameReceipts = result.FrameReceipts
 	}
 
 	// If the transaction created a contract, store the creation address in the receipt.
-	if tx.To() == nil {
+	if tx.To() == nil && tx.Type() != types.FrameTxType {
 		receipt.ContractAddress = crypto.CreateAddress(evm.TxContext.Origin, tx.Nonce())
 	}
 

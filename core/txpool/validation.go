@@ -86,6 +86,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if !rules.IsPrague && tx.Type() == types.SetCodeTxType {
 		return fmt.Errorf("%w: type %d rejected, pool not yet in Prague", core.ErrTxTypeNotSupported, tx.Type())
 	}
+	if !rules.IsBogota && tx.Type() == types.FrameTxType {
+		return fmt.Errorf("%w: type %d rejected, pool not yet in Bogota", core.ErrTxTypeNotSupported, tx.Type())
+	}
 	// Check whether the init code size has been exceeded
 	if tx.To() == nil {
 		if err := vm.CheckMaxInitCodeSize(&rules, uint64(len(tx.Data()))); err != nil {
@@ -119,16 +122,29 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if _, err := types.Sender(signer, tx); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidSender, err)
 	}
-	// Limit nonce to 2^64-1 per EIP-2681
-	if tx.Nonce()+1 < tx.Nonce() {
+	// Limit nonce to 2^64-1 per EIP-2681. Frame txs may use max nonce value.
+	if tx.Type() != types.FrameTxType && tx.Nonce()+1 < tx.Nonce() {
 		return core.ErrNonceMax
 	}
 	// Ensure the transaction has more gas than the bare minimum needed to cover
 	// the transaction metadata
-	gasCostPerStateByte := core.CostPerStateByte(head, opts.Config)
-	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, rules, gasCostPerStateByte)
-	if err != nil {
-		return err
+	var (
+		gasCostPerStateByte uint64
+		intrGas             vm.GasCosts
+		err                 error
+	)
+	if tx.Type() == types.FrameTxType {
+		_, _, regularGas, err := types.CalcFrameTxGas(tx.Frames())
+		if err != nil {
+			return err
+		}
+		intrGas = vm.GasCosts{RegularGas: regularGas}
+	} else {
+		gasCostPerStateByte = core.CostPerStateByte(head, opts.Config)
+		intrGas, err = core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, rules, gasCostPerStateByte)
+		if err != nil {
+			return err
+		}
 	}
 	if gasCostPerStateByte != 0 {
 		// We require transactions to pay for 110% of intrinsic gas in order to
@@ -143,7 +159,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 
 	// Ensure the transaction can cover floor data gas.
-	if rules.IsPrague {
+	if rules.IsPrague && tx.Type() != types.FrameTxType {
 		floorDataGas, err := core.FloorDataGas(tx.Data())
 		if err != nil {
 			return err

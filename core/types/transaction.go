@@ -27,6 +27,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/holiman/uint256"
 )
@@ -50,6 +51,7 @@ const (
 	DynamicFeeTxType = 0x02
 	BlobTxType       = 0x03
 	SetCodeTxType    = 0x04
+	FrameTxType      = 0x06
 )
 
 // Transaction is an Ethereum transaction.
@@ -212,6 +214,8 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 		inner = new(BlobTx)
 	case SetCodeTxType:
 		inner = new(SetCodeTx)
+	case FrameTxType:
+		inner = new(FrameTx)
 	default:
 		return nil, ErrTxTypeNotSupported
 	}
@@ -318,8 +322,8 @@ func (tx *Transaction) To() *common.Address {
 // Cost returns (gas * gasPrice) + (blobGas * blobGasPrice) + value.
 func (tx *Transaction) Cost() *big.Int {
 	total := new(big.Int).Mul(tx.GasPrice(), new(big.Int).SetUint64(tx.Gas()))
-	if tx.Type() == BlobTxType {
-		total.Add(total, new(big.Int).Mul(tx.BlobGasFeeCap(), new(big.Int).SetUint64(tx.BlobGas())))
+	if blobGas := tx.BlobGas(); blobGas > 0 {
+		total.Add(total, new(big.Int).Mul(tx.BlobGasFeeCap(), new(big.Int).SetUint64(blobGas)))
 	}
 	total.Add(total, tx.Value())
 	return total
@@ -442,26 +446,41 @@ func (tx *Transaction) EffectiveGasTipIntCmp(other *uint256.Int, baseFee *uint25
 
 // BlobGas returns the blob gas limit of the transaction for blob transactions, 0 otherwise.
 func (tx *Transaction) BlobGas() uint64 {
-	if blobtx, ok := tx.inner.(*BlobTx); ok {
-		return blobtx.blobGas()
+	switch itx := tx.inner.(type) {
+	case *BlobTx:
+		return itx.blobGas()
+	case *FrameTx:
+		return params.BlobTxBlobGasPerBlob * uint64(len(itx.BlobVersionedHashes))
+	default:
+		return 0
 	}
-	return 0
 }
 
-// BlobGasFeeCap returns the blob gas fee cap per blob gas of the transaction for blob transactions, nil otherwise.
+// BlobGasFeeCap returns the blob gas fee cap per blob gas of the transaction for blob-carrying transactions, nil otherwise.
 func (tx *Transaction) BlobGasFeeCap() *big.Int {
-	if blobtx, ok := tx.inner.(*BlobTx); ok {
-		return blobtx.BlobFeeCap.ToBig()
+	switch itx := tx.inner.(type) {
+	case *BlobTx:
+		return itx.BlobFeeCap.ToBig()
+	case *FrameTx:
+		if itx.MaxFeePerBlobGas == nil {
+			return nil
+		}
+		return itx.MaxFeePerBlobGas.ToBig()
+	default:
+		return nil
 	}
-	return nil
 }
 
-// BlobHashes returns the hashes of the blob commitments for blob transactions, nil otherwise.
+// BlobHashes returns the hashes of the blob commitments for blob-carrying transactions, nil otherwise.
 func (tx *Transaction) BlobHashes() []common.Hash {
-	if blobtx, ok := tx.inner.(*BlobTx); ok {
-		return blobtx.BlobHashes
+	switch itx := tx.inner.(type) {
+	case *BlobTx:
+		return itx.BlobHashes
+	case *FrameTx:
+		return itx.BlobVersionedHashes
+	default:
+		return nil
 	}
-	return nil
 }
 
 // BlobTxSidecar returns the sidecar of a blob transaction, nil otherwise.
@@ -556,6 +575,25 @@ func (tx *Transaction) SetCodeAuthorities() []common.Address {
 		}
 	}
 	return auths
+}
+
+// FrameSender returns the declared sender for frame transactions.
+func (tx *Transaction) FrameSender() *common.Address {
+	frametx, ok := tx.inner.(*FrameTx)
+	if !ok {
+		return nil
+	}
+	sender := frametx.Sender
+	return &sender
+}
+
+// Frames returns the frame list of a frame transaction.
+func (tx *Transaction) Frames() []FrameTxFrame {
+	frametx, ok := tx.inner.(*FrameTx)
+	if !ok {
+		return nil
+	}
+	return frametx.Frames
 }
 
 // SetTime sets the decoding time of a transaction. This is used by tests to set

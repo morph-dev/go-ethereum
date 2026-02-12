@@ -79,6 +79,34 @@ type TxContext struct {
 	GasPrice     *uint256.Int        // Provides information for GASPRICE (and is used to zero the basefee if NoBaseFee is set)
 	BlobHashes   []common.Hash       // Provides information for BLOBHASH
 	AccessEvents *state.AccessEvents // Capture all state accesses for this tx
+
+	// Frame transaction context (EIP-8141). Nil for non-frame transactions.
+	FrameContext *FrameContext
+}
+
+// FrameContext holds transaction-scoped state for frame transactions.
+type FrameContext struct {
+	Sender               common.Address
+	Nonce                uint64
+	MaxPriorityFeePerGas *big.Int
+	MaxFeePerGas         *big.Int
+	MaxFeePerBlobGas     *big.Int
+	MaxCost              *big.Int
+	SigHash              common.Hash
+	Frames               []types.FrameTxFrame
+
+	CurrentFrame         int
+	CurrentTarget        common.Address
+	CurrentFrameApproved bool
+	CurrentFrameStatus   uint64
+	FrameStatuses        []uint64
+	FrameSStoreOriginals map[common.Address]map[common.Hash]common.Hash
+
+	SenderApproved bool
+	PayerApproved  bool
+	Payer          common.Address
+
+	UpfrontCost *uint256.Int
 }
 
 // EVM is the Ethereum Virtual Machine base object and provides
@@ -127,8 +155,14 @@ type EVM struct {
 	// jumpDests stores results of JUMPDEST analysis.
 	jumpDests JumpDestCache
 
+	hasher    crypto.KeccakState // Keccak256 hasher instance shared across opcodes
+	hasherBuf common.Hash        // Keccak256 hasher result array shared across opcodes
+
 	readOnly   bool   // Whether to throw on stateful modifications
 	returnData []byte // Last CALL's return data for subsequent reuse
+
+	frameCallStatus uint64 // Current call status (EIP-8141 status propagation)
+	lastCallStatus  uint64 // Status returned by the most recent call opcode
 }
 
 // NewEVM constructs an EVM instance with the supplied block context, state
@@ -137,20 +171,21 @@ type EVM struct {
 // needed by calling evm.SetTxContext.
 func NewEVM(blockCtx BlockContext, statedb StateDB, chainConfig *params.ChainConfig, config Config) *EVM {
 	evm := &EVM{
-		Context:     blockCtx,
-		StateDB:     statedb,
-		Config:      config,
-		chainConfig: chainConfig,
-		chainRules:  chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Random != nil, blockCtx.Time),
-		jumpDests:   newMapJumpDests(),
+		Context:         blockCtx,
+		StateDB:         statedb,
+		Config:          config,
+		chainConfig:     chainConfig,
+		chainRules:      chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Random != nil, blockCtx.Time),
+		jumpDests:       newMapJumpDests(),
+		hasher:          crypto.NewKeccakState(),
+		frameCallStatus: 1,
+		lastCallStatus:  1,
 	}
 	evm.precompiles = activePrecompiledContracts(evm.chainRules)
 
 	switch {
-	case evm.chainRules.IsBogota:
+	case evm.chainRules.IsBogota || evm.chainRules.IsAmsterdam:
 		evm.table = &bogotaInstructionSet
-	case evm.chainRules.IsAmsterdam:
-		evm.table = &amsterdamInstructionSet
 	case evm.chainRules.IsOsaka:
 		evm.table = &osakaInstructionSet
 	case evm.chainRules.IsVerkle:
@@ -248,6 +283,16 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 			evm.captureEnd(evm.depth, startGas, leftOverGas, ret, err)
 		}(gas)
 	}
+	parentCallStatus := evm.frameCallStatus
+	evm.frameCallStatus = 1
+	defer func() {
+		status := uint64(0)
+		if err == nil {
+			status = evm.frameCallStatus
+		}
+		evm.lastCallStatus = status
+		evm.frameCallStatus = parentCallStatus
+	}()
 	// Fail if we're trying to execute above the call depth limit
 	if evm.depth > int(params.CallCreateDepth) {
 		return nil, gas, GasUsed{}, ErrDepth
@@ -339,6 +384,16 @@ func (evm *EVM) CallCode(caller common.Address, addr common.Address, input []byt
 			evm.captureEnd(evm.depth, startGas, leftOverGas, ret, err)
 		}(gas)
 	}
+	parentCallStatus := evm.frameCallStatus
+	evm.frameCallStatus = 1
+	defer func() {
+		status := uint64(0)
+		if err == nil {
+			status = evm.frameCallStatus
+		}
+		evm.lastCallStatus = status
+		evm.frameCallStatus = parentCallStatus
+	}()
 	// Fail if we're trying to execute above the call depth limit
 	if evm.depth > int(params.CallCreateDepth) {
 		return nil, gas, GasUsed{}, ErrDepth
@@ -398,6 +453,16 @@ func (evm *EVM) DelegateCall(originCaller common.Address, caller common.Address,
 			evm.captureEnd(evm.depth, startGas, leftOverGas, ret, err)
 		}(gas)
 	}
+	parentCallStatus := evm.frameCallStatus
+	evm.frameCallStatus = 1
+	defer func() {
+		status := uint64(0)
+		if err == nil {
+			status = evm.frameCallStatus
+		}
+		evm.lastCallStatus = status
+		evm.frameCallStatus = parentCallStatus
+	}()
 	// Fail if we're trying to execute above the call depth limit
 	if evm.depth > int(params.CallCreateDepth) {
 		return nil, gas, GasUsed{}, ErrDepth
@@ -449,6 +514,16 @@ func (evm *EVM) StaticCall(caller common.Address, addr common.Address, input []b
 			evm.captureEnd(evm.depth, startGas, leftOverGas, ret, err)
 		}(gas)
 	}
+	parentCallStatus := evm.frameCallStatus
+	evm.frameCallStatus = 1
+	defer func() {
+		status := uint64(0)
+		if err == nil {
+			status = evm.frameCallStatus
+		}
+		evm.lastCallStatus = status
+		evm.frameCallStatus = parentCallStatus
+	}()
 	// Fail if we're trying to execute above the call depth limit
 	if evm.depth > int(params.CallCreateDepth) {
 		return nil, gas, GasUsed{}, ErrDepth

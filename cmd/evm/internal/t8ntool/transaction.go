@@ -133,21 +133,30 @@ func Transaction(ctx *cli.Context) error {
 		}
 		// Check intrinsic gas
 		rules := chainConfig.Rules(common.Big0, true, 0)
-		gasCostPerStateByte := core.CostPerStateByte(&types.Header{}, chainConfig)
-		gas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, rules, gasCostPerStateByte)
+		var requiredGas uint64
+		if tx.Type() == types.FrameTxType {
+			_, _, requiredGas, err = types.CalcFrameTxGas(tx.Frames())
+		} else {
+			gasCostPerStateByte := core.CostPerStateByte(&types.Header{}, chainConfig)
+			gas, ierr := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, rules, gasCostPerStateByte)
+			err = ierr
+			if err == nil {
+				requiredGas = gas.RegularGas
+			}
+		}
 		if err != nil {
 			r.Error = err
 			results = append(results, r)
 			continue
 		}
-		r.IntrinsicGas = gas.RegularGas
-		if tx.Gas() < gas.RegularGas {
-			r.Error = fmt.Errorf("%w: have %d, want %d", core.ErrIntrinsicGas, tx.Gas(), gas.RegularGas)
+		r.IntrinsicGas = hexutil.Uint64(requiredGas)
+		if tx.Gas() < requiredGas {
+			r.Error = fmt.Errorf("%w: have %d, want %d", core.ErrIntrinsicGas, tx.Gas(), requiredGas)
 			results = append(results, r)
 			continue
 		}
 		// For Prague txs, validate the floor data gas.
-		if rules.IsPrague {
+		if rules.IsPrague && tx.Type() != types.FrameTxType {
 			floorDataGas, err := core.FloorDataGas(tx.Data())
 			if err != nil {
 				r.Error = err

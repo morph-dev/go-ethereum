@@ -88,12 +88,29 @@ func (t *txWithKey) UnmarshalJSON(input []byte) error {
 func signUnsignedTransactions(txs []*txWithKey, signer types.Signer) (types.Transactions, error) {
 	var signedTxs []*types.Transaction
 	for i, tx := range txs {
+		if tx.tx.Type() == types.FrameTxType {
+			if tx.key != nil {
+				return nil, NewError(ErrorJson, fmt.Errorf("tx %d: frame transaction cannot be signed with secretKey", i))
+			}
+			signedTxs = append(signedTxs, tx.tx)
+			continue
+		}
 		var (
 			v, r, s = tx.tx.RawSignatureValues()
 			signed  *types.Transaction
 			err     error
+			sigBits int
 		)
-		if tx.key == nil || v.BitLen()+r.BitLen()+s.BitLen() != 0 {
+		if v != nil {
+			sigBits += v.BitLen()
+		}
+		if r != nil {
+			sigBits += r.BitLen()
+		}
+		if s != nil {
+			sigBits += s.BitLen()
+		}
+		if tx.key == nil || sigBits != 0 {
 			// Already signed
 			signedTxs = append(signedTxs, tx.tx)
 			continue

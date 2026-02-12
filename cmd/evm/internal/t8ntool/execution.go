@@ -230,8 +230,8 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 			rejectedTxs = append(rejectedTxs, &rejectedTx{i, err.Error()})
 			continue
 		}
-		if tx.Type() == types.BlobTxType && vmContext.BlobBaseFee == nil {
-			errMsg := "blob tx used but field env.ExcessBlobGas missing"
+		if tx.BlobGas() > 0 && vmContext.BlobBaseFee == nil {
+			errMsg := "blob-carrying tx used but field env.ExcessBlobGas missing"
 			log.Warn("rejected tx", "index", i, "hash", tx.Hash(), "error", errMsg)
 			rejectedTxs = append(rejectedTxs, &rejectedTx{i, errMsg})
 			continue
@@ -242,9 +242,8 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 			rejectedTxs = append(rejectedTxs, &rejectedTx{i, err.Error()})
 			continue
 		}
-		txBlobGas := uint64(0)
-		if tx.Type() == types.BlobTxType {
-			txBlobGas = uint64(params.BlobTxBlobGasPerBlob * len(tx.BlobHashes()))
+		txBlobGas := tx.BlobGas()
+		if txBlobGas > 0 {
 			max := eip4844.MaxBlobGasPerBlock(chainConfig, pre.Env.Timestamp)
 			if used := blobGasUsed + txBlobGas; used > max {
 				err := fmt.Errorf("blob gas (%d) would exceed maximum allowance %d", used, max)

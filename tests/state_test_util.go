@@ -389,6 +389,15 @@ func (t *StateTest) genesis(config *params.ChainConfig) *core.Genesis {
 }
 
 func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Message, error) {
+	if len(ps.TxBytes) != 0 {
+		var ttx types.Transaction
+		if err := ttx.UnmarshalBinary(ps.TxBytes); err != nil {
+			return nil, err
+		}
+		signer := types.LatestSignerForChainID(ttx.ChainId())
+		return core.TransactionToMessage(&ttx, signer, baseFee)
+	}
+
 	var from common.Address
 	// If 'sender' field is present, use that
 	if tx.Sender != nil {

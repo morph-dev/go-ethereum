@@ -101,6 +101,8 @@ const (
 	TxAccessListStorageKeyGas uint64 = 1900  // Per storage key specified in EIP 2930 access list
 	TxAuthTupleGas            uint64 = 12500 // Per auth tuple code specified in EIP-7702
 	TxAuthTupleRegularGas     uint64 = 7500  // Per auth tuple regular gas specified in EIP-8037
+	FrameTxIntrinsicGas       uint64 = 15000 // Per frame transaction fixed intrinsic gas cost (EIP-8141)
+	FrameTxMaxFrames                 = 1000  // Maximum number of frames in a frame transaction (EIP-8141)
 
 	// These have been changed during the course of the chain
 	CallGasFrontier              uint64 = 40  // Once per CALL operation & message call transaction.
@@ -212,6 +214,9 @@ var (
 
 // System contracts.
 var (
+	// FrameTxEntryPoint is the caller address used by DEFAULT and VERIFY frames (EIP-8141).
+	FrameTxEntryPoint = common.HexToAddress("0x00000000000000000000000000000000000000aa")
+
 	// SystemAddress is where the system-transaction is sent from as per EIP-4788
 	SystemAddress = common.HexToAddress("0xfffffffffffffffffffffffffffffffffffffffe")
 
