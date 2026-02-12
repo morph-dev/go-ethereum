@@ -751,7 +751,7 @@ func opCall(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	if err != nil {
 		temp.Clear()
 	} else {
-		temp.SetOne()
+		temp.SetUint64(evm.lastCallStatus)
 	}
 	stack.push(&temp)
 	if err == nil || err == ErrExecutionReverted {
@@ -784,7 +784,7 @@ func opCallCode(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	if err != nil {
 		temp.Clear()
 	} else {
-		temp.SetOne()
+		temp.SetUint64(evm.lastCallStatus)
 	}
 	stack.push(&temp)
 	if err == nil || err == ErrExecutionReverted {
@@ -813,7 +813,7 @@ func opDelegateCall(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	if err != nil {
 		temp.Clear()
 	} else {
-		temp.SetOne()
+		temp.SetUint64(evm.lastCallStatus)
 	}
 	stack.push(&temp)
 	if err == nil || err == ErrExecutionReverted {
@@ -842,7 +842,7 @@ func opStaticCall(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	if err != nil {
 		temp.Clear()
 	} else {
-		temp.SetOne()
+		temp.SetUint64(evm.lastCallStatus)
 	}
 	stack.push(&temp)
 	if err == nil || err == ErrExecutionReverted {

@@ -81,7 +81,11 @@ func (tt *TransactionTest) Run() error {
 			return
 		}
 		// Intrinsic gas
-		requiredGas, err = core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai)
+		if tx.Type() == types.FrameTxType {
+			_, _, requiredGas, err = types.CalcFrameTxGas(tx.Frames())
+		} else {
+			requiredGas, err = core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai)
+		}
 		if err != nil {
 			return
 		}
@@ -89,7 +93,7 @@ func (tt *TransactionTest) Run() error {
 			return sender, hash, 0, fmt.Errorf("insufficient gas ( %d < %d )", tx.Gas(), requiredGas)
 		}
 
-		if rules.IsPrague {
+		if rules.IsPrague && tx.Type() != types.FrameTxType {
 			var floorDataGas uint64
 			floorDataGas, err = core.FloorDataGas(tx.Data())
 			if err != nil {
@@ -119,6 +123,7 @@ func (tt *TransactionTest) Run() error {
 		{"Shanghai", true},
 		{"Cancun", true},
 		{"Prague", true},
+		{"Bogota", true},
 	} {
 		expected := tt.Result[testcase.name]
 		if expected == nil {

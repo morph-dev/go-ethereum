@@ -134,6 +134,10 @@ func (s *hookedStateDB) SetTransientState(addr common.Address, key, value common
 	s.inner.SetTransientState(addr, key, value)
 }
 
+func (s *hookedStateDB) ClearTransientStorage() {
+	s.inner.ClearTransientStorage()
+}
+
 func (s *hookedStateDB) HasSelfDestructed(addr common.Address) bool {
 	if s.hooks.OnAccountRead != nil {
 		s.hooks.OnAccountRead(addr)
@@ -264,6 +268,10 @@ func (s *hookedStateDB) AddLog(log *types.Log) {
 	if s.hooks.OnLog != nil {
 		s.hooks.OnLog(log)
 	}
+}
+
+func (s *hookedStateDB) GetLogs(hash common.Hash, blockNumber uint64, blockHash common.Hash, blockTime uint64) []*types.Log {
+	return s.inner.GetLogs(hash, blockNumber, blockHash, blockTime)
 }
 
 func (s *hookedStateDB) Finalise(deleteEmptyObjects bool) {

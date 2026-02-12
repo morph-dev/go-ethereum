@@ -85,6 +85,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if !rules.IsPrague && tx.Type() == types.SetCodeTxType {
 		return fmt.Errorf("%w: type %d rejected, pool not yet in Prague", core.ErrTxTypeNotSupported, tx.Type())
 	}
+	if !rules.IsBogota && !rules.IsAmsterdam && tx.Type() == types.FrameTxType {
+		return fmt.Errorf("%w: type %d rejected, pool not yet in Amsterdam", core.ErrTxTypeNotSupported, tx.Type())
+	}
 	// Check whether the init code size has been exceeded
 	if rules.IsShanghai && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
 		return fmt.Errorf("%w: code size %v, limit %v", core.ErrMaxInitCodeSizeExceeded, len(tx.Data()), params.MaxInitCodeSize)
@@ -116,21 +119,32 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if _, err := types.Sender(signer, tx); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidSender, err)
 	}
-	// Limit nonce to 2^64-1 per EIP-2681
-	if tx.Nonce()+1 < tx.Nonce() {
+	// Limit nonce to 2^64-1 per EIP-2681. Frame txs may use max nonce value.
+	if tx.Type() != types.FrameTxType && tx.Nonce()+1 < tx.Nonce() {
 		return core.ErrNonceMax
 	}
 	// Ensure the transaction has more gas than the bare minimum needed to cover
 	// the transaction metadata
-	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsIstanbul, rules.IsShanghai)
-	if err != nil {
-		return err
+	var (
+		intrGas uint64
+		err     error
+	)
+	if tx.Type() == types.FrameTxType {
+		_, _, intrGas, err = types.CalcFrameTxGas(tx.Frames())
+		if err != nil {
+			return err
+		}
+	} else {
+		intrGas, err = core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsIstanbul, rules.IsShanghai)
+		if err != nil {
+			return err
+		}
 	}
 	if tx.Gas() < intrGas {
 		return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrIntrinsicGas, tx.Gas(), intrGas)
 	}
 	// Ensure the transaction can cover floor data gas.
-	if rules.IsPrague {
+	if rules.IsPrague && tx.Type() != types.FrameTxType {
 		floorDataGas, err := core.FloorDataGas(tx.Data())
 		if err != nil {
 			return err

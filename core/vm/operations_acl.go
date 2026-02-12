@@ -37,11 +37,28 @@ func makeGasSStoreFunc(clearingRefund uint64) gasFunc {
 		}
 		// Gas sentry honoured, do the actual gas calculation based on the stored value
 		var (
-			y, x              = stack.Back(1), stack.peek()
-			slot              = common.Hash(x.Bytes32())
-			current, original = evm.StateDB.GetStateAndCommittedState(contract.Address(), slot)
-			cost              = uint64(0)
+			y, x = stack.Back(1), stack.peek()
+			slot = common.Hash(x.Bytes32())
+			cost = uint64(0)
 		)
+		current, original := evm.StateDB.GetStateAndCommittedState(contract.Address(), slot)
+		if fc := evm.TxContext.FrameContext; fc != nil {
+			addr := contract.Address()
+			if fc.FrameSStoreOriginals == nil {
+				fc.FrameSStoreOriginals = make(map[common.Address]map[common.Hash]common.Hash)
+			}
+			slots := fc.FrameSStoreOriginals[addr]
+			if slots == nil {
+				slots = make(map[common.Hash]common.Hash)
+				fc.FrameSStoreOriginals[addr] = slots
+			}
+			if frameOriginal, ok := slots[slot]; ok {
+				original = frameOriginal
+			} else {
+				slots[slot] = current
+				original = current
+			}
+		}
 		// Check slot presence in the access list
 		if _, slotPresent := evm.StateDB.SlotInAccessList(contract.Address(), slot); !slotPresent {
 			cost = params.ColdSloadCostEIP2929
