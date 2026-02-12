@@ -394,7 +394,12 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Mess
 		if err := ttx.UnmarshalBinary(ps.TxBytes); err != nil {
 			return nil, err
 		}
-		signer := types.LatestSignerForChainID(ttx.ChainId())
+		var signer types.Signer
+		if chainID := ttx.ChainId(); chainID == nil || chainID.Sign() == 0 {
+			signer = types.HomesteadSigner{}
+		} else {
+			signer = types.LatestSignerForChainID(chainID)
+		}
 		return core.TransactionToMessage(&ttx, signer, baseFee)
 	}
 
