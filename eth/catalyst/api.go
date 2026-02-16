@@ -116,6 +116,10 @@ var caps = []string{
 	"engine_getPayloadBodiesByRangeV1",
 	"engine_getPayloadBodiesByRangeV2",
 	"engine_getClientVersionV1",
+	"engine_finalizeBlockV1",
+	"engine_newBlockHeaderV1",
+	"engine_newChunkAccessListV1",
+	"engine_newExecuteChunkV1",
 }
 
 var (

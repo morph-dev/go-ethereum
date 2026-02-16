@@ -18,7 +18,6 @@ func (api *ConsensusAPI) NewBlockHeaderV1(
 	beaconRoot common.Hash,
 	blobHashes []common.Hash,
 	requests [][]byte,
-	chunkCount int,
 ) (engine.PayloadStatusV1, error) {
 	if !api.checkFork(data.Timestamp, forks.Amsterdam) {
 		return invalidStatus, unsupportedForkErr("newBlockHeaderV1 is not available before Amsterdam")
@@ -55,7 +54,7 @@ func (api *ConsensusAPI) NewBlockHeaderV1(
 		return api.invalid(err, nil), nil
 	}
 
-	if _, err := api.eth.BlockChain().NewChunkValidator(&header, blobHashes, chunkCount); err != nil {
+	if _, err := api.eth.BlockChain().NewChunkValidator(&header, blobHashes, data.ChunkCount); err != nil {
 		if err == consensus.ErrUnknownAncestor || err == consensus.ErrPrunedAncestor {
 			return engine.PayloadStatusV1{Status: engine.SYNCING}, nil
 		}

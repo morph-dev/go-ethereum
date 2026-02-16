@@ -31,12 +31,13 @@ func (e ExecutableData) MarshalJSON() ([]byte, error) {
 		ExtraData           hexutil.Bytes           `json:"extraData"     gencodec:"required"`
 		BaseFeePerGas       *hexutil.Big            `json:"baseFeePerGas" gencodec:"required"`
 		BlockHash           common.Hash             `json:"blockHash"     gencodec:"required"`
-		Transactions        []hexutil.Bytes         `json:"transactions"  gencodec:"required"`
+		Transactions        []hexutil.Bytes         `json:"transactions"`
 		Withdrawals         []*types.Withdrawal     `json:"withdrawals"`
 		BlobGasUsed         *hexutil.Uint64         `json:"blobGasUsed"`
 		ExcessBlobGas       *hexutil.Uint64         `json:"excessBlobGas"`
 		BlockAccessList     *bal.BlockAccessList    `json:"blockAccessList"`
 		ExecutionWitness    *types.ExecutionWitness `json:"executionWitness,omitempty"`
+		ChunkCount          hexutil.Uint            `json:"chunkCount"`
 		TxHash              *common.Hash            `json:"txHash"`
 		WithdrawalsRoot     *common.Hash            `json:"withdrawalsRoot"`
 		BlockAccessListHash *common.Hash            `json:"blockAccessListHash"`
@@ -66,6 +67,7 @@ func (e ExecutableData) MarshalJSON() ([]byte, error) {
 	enc.ExcessBlobGas = (*hexutil.Uint64)(e.ExcessBlobGas)
 	enc.BlockAccessList = e.BlockAccessList
 	enc.ExecutionWitness = e.ExecutionWitness
+	enc.ChunkCount = hexutil.Uint(e.ChunkCount)
 	enc.TxHash = e.TxHash
 	enc.WithdrawalsRoot = e.WithdrawalsRoot
 	enc.BlockAccessListHash = e.BlockAccessListHash
@@ -88,12 +90,13 @@ func (e *ExecutableData) UnmarshalJSON(input []byte) error {
 		ExtraData           *hexutil.Bytes          `json:"extraData"     gencodec:"required"`
 		BaseFeePerGas       *hexutil.Big            `json:"baseFeePerGas" gencodec:"required"`
 		BlockHash           *common.Hash            `json:"blockHash"     gencodec:"required"`
-		Transactions        []hexutil.Bytes         `json:"transactions"  gencodec:"required"`
+		Transactions        []hexutil.Bytes         `json:"transactions"`
 		Withdrawals         []*types.Withdrawal     `json:"withdrawals"`
 		BlobGasUsed         *hexutil.Uint64         `json:"blobGasUsed"`
 		ExcessBlobGas       *hexutil.Uint64         `json:"excessBlobGas"`
 		BlockAccessList     *bal.BlockAccessList    `json:"blockAccessList"`
 		ExecutionWitness    *types.ExecutionWitness `json:"executionWitness,omitempty"`
+		ChunkCount          *hexutil.Uint           `json:"chunkCount"`
 		TxHash              *common.Hash            `json:"txHash"`
 		WithdrawalsRoot     *common.Hash            `json:"withdrawalsRoot"`
 		BlockAccessListHash *common.Hash            `json:"blockAccessListHash"`
@@ -154,12 +157,11 @@ func (e *ExecutableData) UnmarshalJSON(input []byte) error {
 		return errors.New("missing required field 'blockHash' for ExecutableData")
 	}
 	e.BlockHash = *dec.BlockHash
-	if dec.Transactions == nil {
-		return errors.New("missing required field 'transactions' for ExecutableData")
-	}
-	e.Transactions = make([][]byte, len(dec.Transactions))
-	for k, v := range dec.Transactions {
-		e.Transactions[k] = v
+	if dec.Transactions != nil {
+		e.Transactions = make([][]byte, len(dec.Transactions))
+		for k, v := range dec.Transactions {
+			e.Transactions[k] = v
+		}
 	}
 	if dec.Withdrawals != nil {
 		e.Withdrawals = dec.Withdrawals
@@ -175,6 +177,9 @@ func (e *ExecutableData) UnmarshalJSON(input []byte) error {
 	}
 	if dec.ExecutionWitness != nil {
 		e.ExecutionWitness = dec.ExecutionWitness
+	}
+	if dec.ChunkCount != nil {
+		e.ChunkCount = uint16(*dec.ChunkCount)
 	}
 	if dec.TxHash != nil {
 		e.TxHash = dec.TxHash

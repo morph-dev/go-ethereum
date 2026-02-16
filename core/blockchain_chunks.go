@@ -314,7 +314,7 @@ func (v *BlockChunkValidator) createBody() types.Body {
 // BlockChain
 // =============================================
 
-func (bc *BlockChain) NewChunkValidator(header *types.Header, blobHashes []common.Hash, chunkCount int) (*BlockChunkValidator, error) {
+func (bc *BlockChain) NewChunkValidator(header *types.Header, blobHashes []common.Hash, chunkCount uint16) (*BlockChunkValidator, error) {
 	// Ancestor block must be known.
 	if !bc.HasBlockAndState(header.ParentHash, header.Number.Uint64()-1) {
 		if !bc.HasBlock(header.ParentHash, header.Number.Uint64()-1) {

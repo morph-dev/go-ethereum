@@ -89,7 +89,7 @@ type ExecutableData struct {
 	ExtraData        []byte                  `json:"extraData"     gencodec:"required"`
 	BaseFeePerGas    *big.Int                `json:"baseFeePerGas" gencodec:"required"`
 	BlockHash        common.Hash             `json:"blockHash"     gencodec:"required"`
-	Transactions     [][]byte                `json:"transactions"  gencodec:"required"`
+	Transactions     [][]byte                `json:"transactions"`
 	Withdrawals      []*types.Withdrawal     `json:"withdrawals"`
 	BlobGasUsed      *uint64                 `json:"blobGasUsed"`
 	ExcessBlobGas    *uint64                 `json:"excessBlobGas"`
@@ -97,6 +97,7 @@ type ExecutableData struct {
 	ExecutionWitness *types.ExecutionWitness `json:"executionWitness,omitempty"`
 
 	// EIP-8101: new fields
+	ChunkCount          uint16       `json:"chunkCount"`
 	TxHash              *common.Hash `json:"txHash"`
 	WithdrawalsRoot     *common.Hash `json:"withdrawalsRoot"`
 	BlockAccessListHash *common.Hash `json:"blockAccessListHash"`
@@ -114,6 +115,7 @@ type executableDataMarshaling struct {
 	Transactions  []hexutil.Bytes
 	BlobGasUsed   *hexutil.Uint64
 	ExcessBlobGas *hexutil.Uint64
+	ChunkCount    hexutil.Uint
 }
 
 // StatelessPayloadStatusV1 is the result of a stateless payload execution.
@@ -370,7 +372,7 @@ func BlockToExecutableData(block *types.Block, chunks types.Chunks, fees *big.In
 		data.Withdrawals = block.Withdrawals()
 		data.BlockAccessList = block.Body().AccessList
 	} else {
-		data.Transactions = encodeTransactions(nil)
+		data.ChunkCount = uint16(len(chunks))
 
 		data.TxHash = &block.Header().TxHash
 		data.WithdrawalsRoot = block.Header().WithdrawalsHash
