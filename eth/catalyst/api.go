@@ -119,7 +119,7 @@ var caps = []string{
 	"engine_finalizeBlockV1",
 	"engine_newBlockHeaderV1",
 	"engine_newChunkAccessListV1",
-	"engine_newExecuteChunkV1",
+	"engine_executeChunkV1",
 }
 
 var (

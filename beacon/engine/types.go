@@ -449,13 +449,20 @@ func (v *ClientVersionV1) String() string {
 	return fmt.Sprintf("%s-%s-%s-%s", v.Code, v.Name, v.Version, v.Commit)
 }
 
+//go:generate go run github.com/fjl/gencodec -type ExecutionChunk -field-override executionChunkMarshaling -out gen_chunk.go
+
 type ExecutionChunk struct {
 	ChunkHeader  types.ChunkHeader   `json:"chunkHeader"`
 	Transactions [][]byte            `json:"transactions"`
 	Withdrawals  []*types.Withdrawal `json:"withdrawals"`
 }
 
-//go:generate go run github.com/fjl/gencodec -type ExecutionChunk -field-override executionChunkMarshaling -out gen_chunk.go
+// JSON type overrides for ExecutionChunk.
+type executionChunkMarshaling struct {
+	Transactions []hexutil.Bytes
+}
+
+//go:generate go run github.com/fjl/gencodec -type ExecutionChunkWithCal -field-override executionChunkWithCalMarshaling -out gen_chunk_with_cal.go
 
 type ExecutionChunkWithCal struct {
 	ChunkHeader     types.ChunkHeader    `json:"chunkHeader"`
@@ -464,7 +471,7 @@ type ExecutionChunkWithCal struct {
 	ChunkAccessList *bal.BlockAccessList `json:"cal"`
 }
 
-// JSON type overrides for ExecutionChunk.
-type executionChunkMarshaling struct {
+// JSON type overrides for ExecutionChunkWithCal.
+type executionChunkWithCalMarshaling struct {
 	Transactions []hexutil.Bytes
 }
