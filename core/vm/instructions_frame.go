@@ -37,9 +37,9 @@ func opApprove(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	if fc == nil {
 		return nil, errInvalidFrameOpcode
 	}
-	scopeArg := scope.Stack.pop()
 	offset := scope.Stack.pop()
 	length := scope.Stack.pop()
+	scopeArg := scope.Stack.pop()
 
 	if scope.Contract.Caller() != fc.CurrentTarget && scope.Contract.Address() != fc.CurrentTarget {
 		return nil, errInvalidFrameOpcode

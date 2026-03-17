@@ -114,7 +114,7 @@ func memoryReturn(stack *Stack) (uint64, bool) {
 }
 
 func memoryApprove(stack *Stack) (uint64, bool) {
-	return calcMemSize64(stack.Back(1), stack.Back(2))
+	return calcMemSize64(stack.Back(0), stack.Back(1))
 }
 
 func memoryTxParamCopy(stack *Stack) (uint64, bool) {
