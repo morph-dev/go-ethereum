@@ -703,7 +703,6 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 		frameCtx.CurrentFrame = i
 		frameCtx.CurrentFrameApproved = false
 		frameCtx.CurrentFrameStatus = 0
-		frameCtx.FrameSStoreOriginals = make(map[common.Address]map[common.Hash]common.Hash)
 
 		target := msg.FrameSender
 		if frame.Target != nil {
@@ -724,6 +723,9 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 			return nil, ErrFrameTxInvalidExecution
 		}
 		st.evm.TxContext.Origin = caller
+		st.state.AddAddressToAccessList(target)
+		st.state.AddAddressToAccessList(caller)
+		st.state.AddAddressToAccessList(msg.FrameSender)
 
 		var logsBefore int
 		if logProvider != nil {

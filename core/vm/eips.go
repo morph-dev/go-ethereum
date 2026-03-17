@@ -602,7 +602,7 @@ func enable7843(jt *JumpTable) {
 func enable8141(jt *JumpTable) {
 	jt[APPROVE] = &operation{
 		execute:     opApprove,
-		constantGas: GasQuickStep,
+		constantGas: 0,
 		dynamicGas:  gasReturn,
 		minStack:    minStack(3, 0),
 		maxStack:    maxStack(3, 0),
