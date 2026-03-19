@@ -41,8 +41,10 @@ type sigCache struct {
 func MakeSigner(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64) Signer {
 	var signer Signer
 	switch {
-	case config.IsBogota(blockNumber, blockTime) || config.IsAmsterdam(blockNumber, blockTime):
+	case config.IsBogota(blockNumber, blockTime):
 		signer = NewBogotaSigner(config.ChainID)
+	case config.IsAmsterdam(blockNumber, blockTime):
+		signer = NewAmsterdamSigner(config.ChainID)
 	case config.IsPrague(blockNumber, blockTime):
 		signer = NewPragueSigner(config.ChainID)
 	case config.IsCancun(blockNumber, blockTime):
@@ -72,8 +74,10 @@ func LatestSigner(config *params.ChainConfig) Signer {
 	var signer Signer
 	if config.ChainID != nil {
 		switch {
-		case config.BogotaTime != nil || config.AmsterdamTime != nil:
+		case config.BogotaTime != nil:
 			signer = NewBogotaSigner(config.ChainID)
+		case config.AmsterdamTime != nil:
+			signer = NewAmsterdamSigner(config.ChainID)
 		case config.PragueTime != nil:
 			signer = NewPragueSigner(config.ChainID)
 		case config.CancunTime != nil:
@@ -235,7 +239,7 @@ func newModernSigner(chainID *big.Int, fork forks.Fork) Signer {
 	if fork >= forks.Prague {
 		s.txtypes.set(SetCodeTxType)
 	}
-	if fork >= forks.Amsterdam {
+	if fork >= forks.Bogota {
 		s.txtypes.set(FrameTxType)
 	}
 	return s
@@ -317,6 +321,14 @@ func (s *modernSigner) SignatureValues(tx *Transaction, sig []byte) (R, S, V *bi
 // - legacy Homestead transactions.
 func NewBogotaSigner(chainId *big.Int) Signer {
 	return newModernSigner(chainId, forks.Bogota)
+}
+
+// NewAmsterdamSigner returns a signer for Amsterdam transactions.
+//
+// Amsterdam does not activate frame transactions, but otherwise accepts the
+// same typed transactions as Prague.
+func NewAmsterdamSigner(chainId *big.Int) Signer {
+	return newModernSigner(chainId, forks.Amsterdam)
 }
 
 // NewPragueSigner returns a signer that accepts

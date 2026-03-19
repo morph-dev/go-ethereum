@@ -559,9 +559,6 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 			return errors.New("missing required field 'blobVersionedHashes' in transaction")
 		}
 		itx.BlobVersionedHashes = dec.BlobVersionedHashes
-		if err := itx.validate(); err != nil {
-			return err
-		}
 
 	default:
 		return ErrTxTypeNotSupported

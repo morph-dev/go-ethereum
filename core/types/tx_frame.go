@@ -37,14 +37,19 @@ var (
 )
 
 const (
-	FrameTxModeDefault uint8 = 0
-	FrameTxModeVerify  uint8 = 1
-	FrameTxModeSender  uint8 = 2
+	FrameTxModeDefault uint64 = 0
+	FrameTxModeVerify  uint64 = 1
+	FrameTxModeSender  uint64 = 2
+
+	FrameTxModeMask          uint64 = 0xFF
+	FrameTxAllowExecution    uint64 = 1 << 8
+	FrameTxAllowPayment      uint64 = 1 << 9
+	FrameTxReservedBitsShift uint64 = 10
 )
 
 // FrameTxFrame is a single frame in a frame transaction.
 type FrameTxFrame struct {
-	Mode     uint8
+	Mode     uint64
 	Target   *common.Address `rlp:"nil"` // nil means sender
 	GasLimit uint64
 	Data     []byte
@@ -72,7 +77,7 @@ func (f *FrameTxFrame) UnmarshalJSON(input []byte) error {
 	if err := json.Unmarshal(input, &dec); err != nil {
 		return err
 	}
-	f.Mode = uint8(dec.Mode)
+	f.Mode = uint64(dec.Mode)
 	f.Target = dec.Target
 	f.GasLimit = uint64(dec.GasLimit)
 	f.Data = dec.Data
@@ -212,7 +217,10 @@ func (tx *FrameTx) validate() error {
 		return ErrFrameTxInvalidFormat
 	}
 	for _, frame := range tx.Frames {
-		if frame.Mode > FrameTxModeSender {
+		if frame.Mode&FrameTxModeMask >= 3 {
+			return ErrFrameTxInvalidFormat
+		}
+		if frame.Mode>>FrameTxReservedBitsShift != 0 {
 			return ErrFrameTxInvalidFormat
 		}
 	}
@@ -236,7 +244,7 @@ func (tx *FrameTx) sigHash(chainID *big.Int) common.Hash {
 	frames := make([]FrameTxFrame, len(tx.Frames))
 	for i, frame := range tx.Frames {
 		frames[i] = frame
-		if frame.Mode == FrameTxModeVerify {
+		if frame.Mode&FrameTxModeMask == FrameTxModeVerify {
 			frames[i].Data = nil
 		} else {
 			frames[i].Data = common.CopyBytes(frame.Data)
