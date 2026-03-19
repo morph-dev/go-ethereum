@@ -158,6 +158,17 @@ func (r *Receipt) EncodeRLP(w io.Writer) error {
 }
 
 func (r *Receipt) consensusPayload() any {
+	if r.Type == FrameTxType {
+		payload := &frameTxReceiptRLP{CumulativeGasUsed: r.CumulativeGasUsed}
+		if r.Payer != nil {
+			payload.Payer = *r.Payer
+		}
+		payload.FrameReceipts = make([]frameReceiptRLP, len(r.FrameReceipts))
+		for i, fr := range r.FrameReceipts {
+			payload.FrameReceipts[i] = frameReceiptRLP{Status: fr.Status, GasUsed: fr.GasUsed, Logs: fr.Logs}
+		}
+		return payload
+	}
 	return &receiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs}
 }
 
@@ -239,12 +250,12 @@ func (r *Receipt) decodeTyped(b []byte) error {
 		r.Type = b[0]
 		return r.setFromRLP(data)
 	case FrameTxType:
-		var data receiptRLP
+		var data frameTxReceiptRLP
 		if err := rlp.DecodeBytes(b[1:], &data); err != nil {
 			return err
 		}
 		r.Type = b[0]
-		return r.setFromRLP(data)
+		return r.setFromFrameRLP(data)
 	default:
 		return ErrTxTypeNotSupported
 	}
@@ -469,8 +480,10 @@ func (rs Receipts) EncodeIndex(i int, w *bytes.Buffer) {
 	}
 	w.WriteByte(r.Type)
 	switch r.Type {
-	case AccessListTxType, DynamicFeeTxType, BlobTxType, SetCodeTxType, FrameTxType:
+	case AccessListTxType, DynamicFeeTxType, BlobTxType, SetCodeTxType:
 		rlp.Encode(w, &receiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs})
+	case FrameTxType:
+		rlp.Encode(w, r.consensusPayload())
 	default:
 		// For unsupported types, write nothing. Since this is for
 		// DeriveSha, the error will be caught matching the derived hash

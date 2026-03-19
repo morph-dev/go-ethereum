@@ -253,6 +253,12 @@ func MakeReceipt(evm *vm.EVM, result *ExecutionResult, statedb *state.StateDB, b
 	if tx.Type() == types.FrameTxType {
 		receipt.Payer = result.FramePayer
 		receipt.FrameReceipts = result.FrameReceipts
+		receipt.Logs = make([]*types.Log, 0)
+		for _, fr := range result.FrameReceipts {
+			receipt.Logs = append(receipt.Logs, fr.Logs...)
+		}
+	} else {
+		receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash, blockTime)
 	}
 
 	// If the transaction created a contract, store the creation address in the receipt.
@@ -260,8 +266,7 @@ func MakeReceipt(evm *vm.EVM, result *ExecutionResult, statedb *state.StateDB, b
 		receipt.ContractAddress = crypto.CreateAddress(evm.TxContext.Origin, tx.Nonce())
 	}
 
-	// Set the receipt logs and create the bloom filter.
-	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash, blockTime)
+	// Set the receipt bloom.
 	receipt.Bloom = types.CreateBloom(receipt)
 	receipt.BlockHash = blockHash
 	receipt.BlockNumber = blockNumber
