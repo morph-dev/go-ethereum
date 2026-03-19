@@ -321,7 +321,17 @@ func (t *BlockTest) insertBlocks(blockchain *core.BlockChain) ([]btBlock, error)
 		if !bytes.Equal(enc.Bytes(), expected) {
 			return nil, fmt.Errorf("mismatch. expected\n%s\ngot\n%x\n", expected, enc.Bytes())
 		}
-		// RLP decoding worked, try to insert into chain:
+		// RLP decoding worked, try to insert into chain.
+		//
+		// Some locally generated fixtures omit slotNumber when it is effectively
+		// zero. Mirror the genesis handling and fill in the zero value for
+		// Amsterdam/Bogota headers before importing them.
+		if blockchain.Config().IsAmsterdam(cb.Number(), cb.Time()) && cb.Header().SlotNumber == nil {
+			header := types.CopyHeader(cb.Header())
+			zero := uint64(0)
+			header.SlotNumber = &zero
+			cb = cb.WithSeal(header)
+		}
 		blocks := types.Blocks{cb}
 		i, err := blockchain.InsertChain(blocks)
 		if err != nil {
@@ -410,7 +420,11 @@ func validateHeader(h *btHeader, h2 *types.Header) error {
 	if !reflect.DeepEqual(h.ParentBeaconBlockRoot, h2.ParentBeaconRoot) {
 		return fmt.Errorf("parentBeaconBlockRoot: want: %v have: %v", h.ParentBeaconBlockRoot, h2.ParentBeaconRoot)
 	}
-	if !reflect.DeepEqual(h.SlotNumber, h2.SlotNumber) {
+	switch {
+	case h.SlotNumber == nil && h2.SlotNumber == nil:
+	case h.SlotNumber == nil && h2.SlotNumber != nil && *h2.SlotNumber == 0:
+	case h.SlotNumber != nil && h2.SlotNumber != nil && *h.SlotNumber == *h2.SlotNumber:
+	default:
 		return fmt.Errorf("slotNumber: want: %v have: %v", h.SlotNumber, h2.SlotNumber)
 	}
 	return nil

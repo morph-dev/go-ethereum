@@ -17,6 +17,7 @@
 package t8ntool
 
 import (
+	"encoding/json"
 	"fmt"
 	stdmath "math"
 	"math/big"
@@ -32,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto/keccak"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -54,21 +56,24 @@ type Prestate struct {
 // ExecutionResult contains the execution status after running a state test, any
 // error that might have occurred and a dump of the final state if requested.
 type ExecutionResult struct {
-	StateRoot            common.Hash           `json:"stateRoot"`
-	TxRoot               common.Hash           `json:"txRoot"`
-	ReceiptRoot          common.Hash           `json:"receiptsRoot"`
-	LogsHash             common.Hash           `json:"logsHash"`
-	Bloom                types.Bloom           `json:"logsBloom"        gencodec:"required"`
-	Receipts             types.Receipts        `json:"receipts"`
-	Rejected             []*rejectedTx         `json:"rejected,omitempty"`
-	Difficulty           *math.HexOrDecimal256 `json:"currentDifficulty" gencodec:"required"`
-	GasUsed              math.HexOrDecimal64   `json:"gasUsed"`
-	BaseFee              *math.HexOrDecimal256 `json:"currentBaseFee,omitempty"`
-	WithdrawalsRoot      *common.Hash          `json:"withdrawalsRoot,omitempty"`
-	CurrentExcessBlobGas *math.HexOrDecimal64  `json:"currentExcessBlobGas,omitempty"`
-	CurrentBlobGasUsed   *math.HexOrDecimal64  `json:"blobGasUsed,omitempty"`
-	RequestsHash         *common.Hash          `json:"requestsHash,omitempty"`
-	Requests             [][]byte              `json:"requests"`
+	StateRoot            common.Hash               `json:"stateRoot"`
+	TxRoot               common.Hash               `json:"txRoot"`
+	ReceiptRoot          common.Hash               `json:"receiptsRoot"`
+	LogsHash             common.Hash               `json:"logsHash"`
+	Bloom                types.Bloom               `json:"logsBloom"        gencodec:"required"`
+	Receipts             executionReceipts         `json:"receipts"`
+	Rejected             []*rejectedTx             `json:"rejected,omitempty"`
+	Difficulty           *math.HexOrDecimal256     `json:"currentDifficulty" gencodec:"required"`
+	GasUsed              math.HexOrDecimal64       `json:"gasUsed"`
+	BaseFee              *math.HexOrDecimal256     `json:"currentBaseFee,omitempty"`
+	WithdrawalsRoot      *common.Hash              `json:"withdrawalsRoot,omitempty"`
+	CurrentExcessBlobGas *math.HexOrDecimal64      `json:"currentExcessBlobGas,omitempty"`
+	CurrentBlobGasUsed   *math.HexOrDecimal64      `json:"blobGasUsed,omitempty"`
+	RequestsHash         *common.Hash              `json:"requestsHash,omitempty"`
+	Requests             [][]byte                  `json:"requests"`
+	BlockAccessList      *executionBlockAccessList `json:"blockAccessList,omitempty"`
+	BlockAccessListHash  *common.Hash              `json:"blockAccessListHash,omitempty"`
+	SlotNumber           *math.HexOrDecimal64      `json:"slotNumber,omitempty"`
 }
 
 type executionResultMarshaling struct {
@@ -154,7 +159,7 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		rejectedTxs []*rejectedTx
 		includedTxs types.Transactions
 		blobGasUsed = uint64(0)
-		receipts    = make(types.Receipts, 0)
+		receipts    = make(executionReceipts, 0)
 	)
 	vmContext := vm.BlockContext{
 		CanTransfer: core.CanTransfer,
@@ -205,6 +210,13 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 			vmContext.BlobBaseFee = eip4844.CalcBlobFee(chainConfig, header)
 		}
 	}
+	var balTracer *core.BlockAccessListTracer
+	if chainConfig.IsAmsterdam(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp) ||
+		chainConfig.IsBogota(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp) {
+		if vmConfig.Tracer == nil {
+			balTracer, vmConfig.Tracer = core.NewBlockAccessListTracer()
+		}
+	}
 	// If DAO is supported/enabled, we need to handle it here. In geth 'proper', it's
 	// done in StateProcessor.Process(block, ...), right before transactions are applied.
 	if chainConfig.DAOForkSupport &&
@@ -212,7 +224,11 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		chainConfig.DAOForkBlock.Cmp(new(big.Int).SetUint64(pre.Env.Number)) == 0 {
 		misc.ApplyDAOHardFork(statedb)
 	}
-	evm := vm.NewEVM(vmContext, statedb, chainConfig, vmConfig)
+	tracingStateDB := vm.StateDB(statedb)
+	if hooks := vmConfig.Tracer; hooks != nil {
+		tracingStateDB = state.NewHookedState(statedb, hooks)
+	}
+	evm := vm.NewEVM(vmContext, tracingStateDB, chainConfig, vmConfig)
 	if beaconRoot := pre.Env.ParentBeaconBlockRoot; beaconRoot != nil {
 		core.ProcessBeaconBlockRoot(*beaconRoot, evm)
 	}
@@ -340,17 +356,25 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 	if err != nil {
 		return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not commit state: %v", err))
 	}
+	canonicalReceipts := types.Receipts(receipts)
 	execRs := &ExecutionResult{
 		StateRoot:   root,
 		TxRoot:      types.DeriveSha(includedTxs, trie.NewStackTrie(nil)),
-		ReceiptRoot: types.DeriveSha(receipts, trie.NewStackTrie(nil)),
-		Bloom:       types.MergeBloom(receipts),
+		ReceiptRoot: types.DeriveSha(canonicalReceipts, trie.NewStackTrie(nil)),
+		Bloom:       types.MergeBloom(canonicalReceipts),
 		LogsHash:    rlpHash(statedb.Logs()),
 		Receipts:    receipts,
 		Rejected:    rejectedTxs,
 		Difficulty:  (*math.HexOrDecimal256)(vmContext.Difficulty),
 		GasUsed:     (math.HexOrDecimal64)(gaspool.Used()),
 		BaseFee:     (*math.HexOrDecimal256)(vmContext.BaseFee),
+	}
+	if chainConfig.IsAmsterdam(vmContext.BlockNumber, vmContext.Time) || chainConfig.IsBogota(vmContext.BlockNumber, vmContext.Time) {
+		slotNumber := uint64(0)
+		if pre.Env.SlotNumber != nil {
+			slotNumber = *pre.Env.SlotNumber
+		}
+		execRs.SlotNumber = (*math.HexOrDecimal64)(&slotNumber)
 	}
 	if pre.Env.Withdrawals != nil {
 		h := types.DeriveSha(types.Withdrawals(pre.Env.Withdrawals), trie.NewStackTrie(nil))
@@ -369,6 +393,14 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 			requests[i] = requests[i][1:]
 		}
 		execRs.Requests = requests
+	}
+	if balTracer != nil {
+		balTracer.OnBlockFinalization()
+		blockAccessList := balTracer.AccessList().ToEncodingObj()
+		blockAccessListHash := blockAccessList.Hash()
+		encodedBlockAccessList := executionBlockAccessList(*blockAccessList)
+		execRs.BlockAccessList = &encodedBlockAccessList
+		execRs.BlockAccessListHash = &blockAccessListHash
 	}
 
 	// Re-create statedb instance with new root for MPT mode
@@ -442,4 +474,212 @@ func calcDifficulty(config *params.ChainConfig, number, currentTime, parentTime 
 		Time:       parentTime,
 	}
 	return ethash.CalcDifficulty(config, currentTime, parent)
+}
+
+type executionReceipts []*types.Receipt
+
+type executionBlockAccessList bal.BlockAccessList
+
+type executionBALAccount struct {
+	Address        common.Address              `json:"address"`
+	StorageChanges []executionBALStorageSlot   `json:"storageChanges,omitempty"`
+	StorageReads   []string                    `json:"storageReads,omitempty"`
+	BalanceChanges []executionBALBalanceChange `json:"balanceChanges,omitempty"`
+	NonceChanges   []executionBALNonceChange   `json:"nonceChanges,omitempty"`
+	CodeChanges    []executionBALCodeChange    `json:"codeChanges,omitempty"`
+}
+
+type executionBALStorageSlot struct {
+	Slot        string                      `json:"slot"`
+	SlotChanges []executionBALStorageChange `json:"slotChanges"`
+}
+
+type executionBALStorageChange struct {
+	BlockAccessIndex string `json:"blockAccessIndex"`
+	PostValue        string `json:"postValue"`
+}
+
+type executionBALBalanceChange struct {
+	BlockAccessIndex string `json:"blockAccessIndex"`
+	PostBalance      string `json:"postBalance"`
+}
+
+type executionBALNonceChange struct {
+	BlockAccessIndex string `json:"blockAccessIndex"`
+	PostNonce        string `json:"postNonce"`
+}
+
+type executionBALCodeChange struct {
+	BlockAccessIndex string        `json:"blockAccessIndex"`
+	NewCode          hexutil.Bytes `json:"newCode"`
+}
+
+func (b *executionBlockAccessList) MarshalJSON() ([]byte, error) {
+	if b == nil {
+		return []byte("null"), nil
+	}
+	balValue := bal.BlockAccessList(*b)
+	enc := make([]executionBALAccount, 0, len(balValue))
+	for _, account := range balValue {
+		item := executionBALAccount{Address: account.Address}
+		for _, storageChange := range account.StorageChanges {
+			slotChanges := make([]executionBALStorageChange, 0, len(storageChange.Accesses))
+			for _, access := range storageChange.Accesses {
+				slotChanges = append(slotChanges, executionBALStorageChange{
+					BlockAccessIndex: formatHexUint64(uint64(access.TxIdx)),
+					PostValue:        encodedStorageString(access.ValueAfter),
+				})
+			}
+			item.StorageChanges = append(item.StorageChanges, executionBALStorageSlot{
+				Slot:        encodedStorageString(storageChange.Slot),
+				SlotChanges: slotChanges,
+			})
+		}
+		for _, storageRead := range account.StorageReads {
+			item.StorageReads = append(item.StorageReads, encodedStorageString(storageRead))
+		}
+		for _, balanceChange := range account.BalanceChanges {
+			item.BalanceChanges = append(item.BalanceChanges, executionBALBalanceChange{
+				BlockAccessIndex: formatHexUint64(uint64(balanceChange.TxIdx)),
+				PostBalance:      balanceChange.Balance.Hex(),
+			})
+		}
+		for _, nonceChange := range account.NonceChanges {
+			item.NonceChanges = append(item.NonceChanges, executionBALNonceChange{
+				BlockAccessIndex: formatHexUint64(uint64(nonceChange.TxIdx)),
+				PostNonce:        formatHexUint64(nonceChange.Nonce),
+			})
+		}
+		for _, codeChange := range account.CodeChanges {
+			item.CodeChanges = append(item.CodeChanges, executionBALCodeChange{
+				BlockAccessIndex: formatHexUint64(uint64(codeChange.TxIdx)),
+				NewCode:          hexutil.Bytes(codeChange.Code),
+			})
+		}
+		enc = append(enc, item)
+	}
+	return json.Marshal(enc)
+}
+
+func (b *executionBlockAccessList) UnmarshalJSON(input []byte) error {
+	var decoded bal.BlockAccessList
+	if err := decoded.UnmarshalJSON(input); err != nil {
+		return err
+	}
+	*b = executionBlockAccessList(decoded)
+	return nil
+}
+
+type executionReceipt struct {
+	Type              hexutil.Uint64          `json:"type,omitempty"`
+	PostState         hexutil.Bytes           `json:"root"`
+	Status            hexutil.Uint64          `json:"status"`
+	CumulativeGasUsed hexutil.Uint64          `json:"cumulativeGasUsed"`
+	Bloom             types.Bloom             `json:"logsBloom"`
+	Logs              []executionLog          `json:"logs"`
+	Payer             *common.Address         `json:"payer,omitempty"`
+	FrameReceipts     []executionFrameReceipt `json:"frameReceipts,omitempty"`
+	TxHash            common.Hash             `json:"transactionHash"`
+	ContractAddress   common.Address          `json:"contractAddress"`
+	GasUsed           hexutil.Uint64          `json:"gasUsed"`
+	EffectiveGasPrice *hexutil.Big            `json:"effectiveGasPrice,omitempty"`
+	BlobGasUsed       hexutil.Uint64          `json:"blobGasUsed,omitempty"`
+	BlobGasPrice      *hexutil.Big            `json:"blobGasPrice,omitempty"`
+	BlockHash         common.Hash             `json:"blockHash,omitempty"`
+	BlockNumber       *hexutil.Big            `json:"blockNumber,omitempty"`
+	TransactionIndex  hexutil.Uint            `json:"transactionIndex"`
+}
+
+type executionFrameReceipt struct {
+	Status  hexutil.Uint64 `json:"status"`
+	GasUsed hexutil.Uint64 `json:"gasUsed"`
+	Logs    []executionLog `json:"logs"`
+}
+
+type executionLog struct {
+	Address common.Address `json:"address"`
+	Topics  []common.Hash  `json:"topics"`
+	Data    hexutil.Bytes  `json:"data"`
+}
+
+func (rs executionReceipts) MarshalJSON() ([]byte, error) {
+	enc := make([]executionReceipt, len(rs))
+	for i, receipt := range rs {
+		enc[i] = wrapExecutionReceipt(receipt)
+	}
+	return json.Marshal(enc)
+}
+
+func wrapExecutionReceipt(r *types.Receipt) executionReceipt {
+	logs := wrapExecutionLogs(r.Logs)
+	frameReceipts := make([]executionFrameReceipt, len(r.FrameReceipts))
+	for i, fr := range r.FrameReceipts {
+		frameReceipts[i] = executionFrameReceipt{
+			Status:  hexutil.Uint64(fr.Status),
+			GasUsed: hexutil.Uint64(fr.GasUsed),
+			Logs:    wrapExecutionLogs(fr.Logs),
+		}
+	}
+	enc := executionReceipt{
+		Type:              hexutil.Uint64(r.Type),
+		PostState:         r.PostState,
+		Status:            hexutil.Uint64(r.Status),
+		CumulativeGasUsed: hexutil.Uint64(r.CumulativeGasUsed),
+		Bloom:             r.Bloom,
+		Logs:              logs,
+		Payer:             r.Payer,
+		FrameReceipts:     frameReceipts,
+		TxHash:            r.TxHash,
+		ContractAddress:   r.ContractAddress,
+		GasUsed:           hexutil.Uint64(r.GasUsed),
+		BlockHash:         r.BlockHash,
+		TransactionIndex:  hexutil.Uint(r.TransactionIndex),
+	}
+	if r.EffectiveGasPrice != nil {
+		enc.EffectiveGasPrice = (*hexutil.Big)(r.EffectiveGasPrice)
+	}
+	if r.BlobGasPrice != nil {
+		enc.BlobGasPrice = (*hexutil.Big)(r.BlobGasPrice)
+	}
+	if r.BlockNumber != nil {
+		enc.BlockNumber = (*hexutil.Big)(r.BlockNumber)
+	}
+	if r.BlobGasUsed != 0 {
+		enc.BlobGasUsed = hexutil.Uint64(r.BlobGasUsed)
+	}
+	return enc
+}
+
+func wrapExecutionLogs(logs []*types.Log) []executionLog {
+	if len(logs) == 0 {
+		return []executionLog{}
+	}
+	enc := make([]executionLog, len(logs))
+	for i, log := range logs {
+		enc[i] = executionLog{
+			Address: log.Address,
+			Topics:  log.Topics,
+			Data:    log.Data,
+		}
+	}
+	return enc
+}
+
+func formatHexUint64(v uint64) string {
+	return hexutil.Uint64(v).String()
+}
+
+func encodedStorageString(value *bal.EncodedStorage) string {
+	if value == nil {
+		return "0x0"
+	}
+	encoded, err := value.MarshalJSON()
+	if err != nil {
+		return "0x0"
+	}
+	var out string
+	if err := json.Unmarshal(encoded, &out); err != nil {
+		return "0x0"
+	}
+	return out
 }

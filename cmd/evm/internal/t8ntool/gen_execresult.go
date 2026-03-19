@@ -17,21 +17,24 @@ var _ = (*executionResultMarshaling)(nil)
 // MarshalJSON marshals as JSON.
 func (e ExecutionResult) MarshalJSON() ([]byte, error) {
 	type ExecutionResult struct {
-		StateRoot            common.Hash           `json:"stateRoot"`
-		TxRoot               common.Hash           `json:"txRoot"`
-		ReceiptRoot          common.Hash           `json:"receiptsRoot"`
-		LogsHash             common.Hash           `json:"logsHash"`
-		Bloom                types.Bloom           `json:"logsBloom"        gencodec:"required"`
-		Receipts             types.Receipts        `json:"receipts"`
-		Rejected             []*rejectedTx         `json:"rejected,omitempty"`
-		Difficulty           *math.HexOrDecimal256 `json:"currentDifficulty" gencodec:"required"`
-		GasUsed              math.HexOrDecimal64   `json:"gasUsed"`
-		BaseFee              *math.HexOrDecimal256 `json:"currentBaseFee,omitempty"`
-		WithdrawalsRoot      *common.Hash          `json:"withdrawalsRoot,omitempty"`
-		CurrentExcessBlobGas *math.HexOrDecimal64  `json:"currentExcessBlobGas,omitempty"`
-		CurrentBlobGasUsed   *math.HexOrDecimal64  `json:"blobGasUsed,omitempty"`
-		RequestsHash         *common.Hash          `json:"requestsHash,omitempty"`
-		Requests             []hexutil.Bytes       `json:"requests"`
+		StateRoot            common.Hash               `json:"stateRoot"`
+		TxRoot               common.Hash               `json:"txRoot"`
+		ReceiptRoot          common.Hash               `json:"receiptsRoot"`
+		LogsHash             common.Hash               `json:"logsHash"`
+		Bloom                types.Bloom               `json:"logsBloom"        gencodec:"required"`
+		Receipts             executionReceipts         `json:"receipts"`
+		Rejected             []*rejectedTx             `json:"rejected,omitempty"`
+		Difficulty           *math.HexOrDecimal256     `json:"currentDifficulty" gencodec:"required"`
+		GasUsed              math.HexOrDecimal64       `json:"gasUsed"`
+		BaseFee              *math.HexOrDecimal256     `json:"currentBaseFee,omitempty"`
+		WithdrawalsRoot      *common.Hash              `json:"withdrawalsRoot,omitempty"`
+		CurrentExcessBlobGas *math.HexOrDecimal64      `json:"currentExcessBlobGas,omitempty"`
+		CurrentBlobGasUsed   *math.HexOrDecimal64      `json:"blobGasUsed,omitempty"`
+		RequestsHash         *common.Hash              `json:"requestsHash,omitempty"`
+		Requests             []hexutil.Bytes           `json:"requests"`
+		BlockAccessList      *executionBlockAccessList `json:"blockAccessList,omitempty"`
+		BlockAccessListHash  *common.Hash              `json:"blockAccessListHash,omitempty"`
+		SlotNumber           *math.HexOrDecimal64      `json:"slotNumber,omitempty"`
 	}
 	var enc ExecutionResult
 	enc.StateRoot = e.StateRoot
@@ -48,6 +51,9 @@ func (e ExecutionResult) MarshalJSON() ([]byte, error) {
 	enc.CurrentExcessBlobGas = e.CurrentExcessBlobGas
 	enc.CurrentBlobGasUsed = e.CurrentBlobGasUsed
 	enc.RequestsHash = e.RequestsHash
+	enc.BlockAccessList = e.BlockAccessList
+	enc.BlockAccessListHash = e.BlockAccessListHash
+	enc.SlotNumber = e.SlotNumber
 	if e.Requests != nil {
 		enc.Requests = make([]hexutil.Bytes, len(e.Requests))
 		for k, v := range e.Requests {
@@ -60,21 +66,24 @@ func (e ExecutionResult) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals from JSON.
 func (e *ExecutionResult) UnmarshalJSON(input []byte) error {
 	type ExecutionResult struct {
-		StateRoot            *common.Hash          `json:"stateRoot"`
-		TxRoot               *common.Hash          `json:"txRoot"`
-		ReceiptRoot          *common.Hash          `json:"receiptsRoot"`
-		LogsHash             *common.Hash          `json:"logsHash"`
-		Bloom                *types.Bloom          `json:"logsBloom"        gencodec:"required"`
-		Receipts             *types.Receipts       `json:"receipts"`
-		Rejected             []*rejectedTx         `json:"rejected,omitempty"`
-		Difficulty           *math.HexOrDecimal256 `json:"currentDifficulty" gencodec:"required"`
-		GasUsed              *math.HexOrDecimal64  `json:"gasUsed"`
-		BaseFee              *math.HexOrDecimal256 `json:"currentBaseFee,omitempty"`
-		WithdrawalsRoot      *common.Hash          `json:"withdrawalsRoot,omitempty"`
-		CurrentExcessBlobGas *math.HexOrDecimal64  `json:"currentExcessBlobGas,omitempty"`
-		CurrentBlobGasUsed   *math.HexOrDecimal64  `json:"blobGasUsed,omitempty"`
-		RequestsHash         *common.Hash          `json:"requestsHash,omitempty"`
-		Requests             []hexutil.Bytes       `json:"requests"`
+		StateRoot            *common.Hash              `json:"stateRoot"`
+		TxRoot               *common.Hash              `json:"txRoot"`
+		ReceiptRoot          *common.Hash              `json:"receiptsRoot"`
+		LogsHash             *common.Hash              `json:"logsHash"`
+		Bloom                *types.Bloom              `json:"logsBloom"        gencodec:"required"`
+		Receipts             *executionReceipts        `json:"receipts"`
+		Rejected             []*rejectedTx             `json:"rejected,omitempty"`
+		Difficulty           *math.HexOrDecimal256     `json:"currentDifficulty" gencodec:"required"`
+		GasUsed              *math.HexOrDecimal64      `json:"gasUsed"`
+		BaseFee              *math.HexOrDecimal256     `json:"currentBaseFee,omitempty"`
+		WithdrawalsRoot      *common.Hash              `json:"withdrawalsRoot,omitempty"`
+		CurrentExcessBlobGas *math.HexOrDecimal64      `json:"currentExcessBlobGas,omitempty"`
+		CurrentBlobGasUsed   *math.HexOrDecimal64      `json:"blobGasUsed,omitempty"`
+		RequestsHash         *common.Hash              `json:"requestsHash,omitempty"`
+		Requests             []hexutil.Bytes           `json:"requests"`
+		BlockAccessList      *executionBlockAccessList `json:"blockAccessList,omitempty"`
+		BlockAccessListHash  *common.Hash              `json:"blockAccessListHash,omitempty"`
+		SlotNumber           *math.HexOrDecimal64      `json:"slotNumber,omitempty"`
 	}
 	var dec ExecutionResult
 	if err := json.Unmarshal(input, &dec); err != nil {
@@ -123,6 +132,15 @@ func (e *ExecutionResult) UnmarshalJSON(input []byte) error {
 	}
 	if dec.RequestsHash != nil {
 		e.RequestsHash = dec.RequestsHash
+	}
+	if dec.BlockAccessList != nil {
+		e.BlockAccessList = dec.BlockAccessList
+	}
+	if dec.BlockAccessListHash != nil {
+		e.BlockAccessListHash = dec.BlockAccessListHash
+	}
+	if dec.SlotNumber != nil {
+		e.SlotNumber = dec.SlotNumber
 	}
 	if dec.Requests != nil {
 		e.Requests = make([][]byte, len(dec.Requests))

@@ -554,9 +554,6 @@ func (g *Genesis) toBlockWithRoot(root common.Hash) *types.Block {
 		}
 		if conf.IsAmsterdam(num, g.Timestamp) {
 			head.SlotNumber = g.SlotNumber
-			if head.SlotNumber == nil {
-				head.SlotNumber = new(uint64)
-			}
 		}
 	}
 	return types.NewBlock(head, &types.Body{Withdrawals: withdrawals}, nil, trie.NewStackTrie(nil))
