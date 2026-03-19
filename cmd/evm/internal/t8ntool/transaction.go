@@ -149,7 +149,7 @@ func Transaction(ctx *cli.Context) error {
 			results = append(results, r)
 			continue
 		}
-		r.IntrinsicGas = hexutil.Uint64(requiredGas)
+		r.IntrinsicGas = requiredGas
 		if tx.Gas() < requiredGas {
 			r.Error = fmt.Errorf("%w: have %d, want %d", core.ErrIntrinsicGas, tx.Gas(), requiredGas)
 			results = append(results, r)

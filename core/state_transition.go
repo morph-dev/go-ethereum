@@ -477,8 +477,8 @@ func (st *stateTransition) preCheck() error {
 		if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil {
 			st.evm.Config.Tracer.OnGasChange(0, msg.GasLimit, tracing.GasChangeTxInitialBalance)
 		}
-		st.gasRemaining = msg.GasLimit
-		st.initialGas = msg.GasLimit
+		st.gasRemaining = vm.GasCosts{RegularGas: msg.GasLimit}
+		st.initialGas = vm.GasCosts{RegularGas: msg.GasLimit}
 		return nil
 	}
 	return st.buyGas()
@@ -715,13 +715,13 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 	if totalGas != msg.GasLimit {
 		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, msg.GasLimit, totalGas)
 	}
-	if st.gasRemaining < intrinsicGas {
-		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining, intrinsicGas)
+	if st.gasRemaining.RegularGas < intrinsicGas {
+		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining.RegularGas, intrinsicGas)
 	}
 	if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
-		t.OnGasChange(st.gasRemaining, st.gasRemaining-intrinsicGas, tracing.GasChangeTxIntrinsicGas)
+		t.OnGasChange(st.gasRemaining.RegularGas, st.gasRemaining.RegularGas-intrinsicGas, tracing.GasChangeTxIntrinsicGas)
 	}
-	st.gasRemaining -= intrinsicGas
+	st.gasRemaining.RegularGas -= intrinsicGas
 
 	if rules.IsEIP4762 {
 		st.evm.AccessEvents.AddTxOrigin(msg.From)
@@ -823,24 +823,25 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 		}
 
 		var (
-			leftOverGas uint64
+			leftOverGas vm.GasCosts
 			vmerr       error
 		)
+		frameGas := vm.GasCosts{RegularGas: frame.GasLimit}
 		if execMode == types.FrameTxModeVerify {
-			_, leftOverGas, vmerr = st.evm.StaticCall(caller, target, frame.Data, frame.GasLimit)
+			_, leftOverGas, _, vmerr = st.evm.StaticCall(caller, target, frame.Data, frameGas)
 		} else {
-			_, leftOverGas, vmerr = st.evm.Call(caller, target, frame.Data, frame.GasLimit, common.U2560)
+			_, leftOverGas, _, vmerr = st.evm.Call(caller, target, frame.Data, frameGas, common.U2560)
 		}
 		if vmerr != nil {
 			frameCtx.SenderApproved = senderApprovedBefore
 			frameCtx.PayerApproved = payerApprovedBefore
 			frameCtx.Payer = payerBefore
 		}
-		gasUsed := frame.GasLimit - leftOverGas
-		if st.gasRemaining < gasUsed {
+		gasUsed := frame.GasLimit - leftOverGas.RegularGas
+		if st.gasRemaining.RegularGas < gasUsed {
 			return nil, fmt.Errorf("%w: frame gas accounting underflow", ErrIntrinsicGas)
 		}
-		st.gasRemaining -= gasUsed
+		st.gasRemaining.RegularGas -= gasUsed
 
 		if execMode == types.FrameTxModeVerify && (!frameCtx.CurrentFrameApproved || vmerr != nil) {
 			return nil, ErrFrameTxInvalidExecution
@@ -866,13 +867,15 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 		return nil, ErrFrameTxInvalidExecution
 	}
 
-	remaining := uint256.NewInt(st.gasRemaining)
+	remaining := uint256.NewInt(st.gasRemaining.RegularGas)
 	remaining.Mul(remaining, uint256.MustFromBig(msg.GasPrice))
 	st.state.AddBalance(frameCtx.Payer, remaining, tracing.BalanceIncreaseGasReturn)
-	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil && st.gasRemaining > 0 {
-		st.evm.Config.Tracer.OnGasChange(st.gasRemaining, 0, tracing.GasChangeTxLeftOverReturned)
+	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil && st.gasRemaining.RegularGas > 0 {
+		st.evm.Config.Tracer.OnGasChange(st.gasRemaining.RegularGas, 0, tracing.GasChangeTxLeftOverReturned)
 	}
-	st.gp.AddGas(st.gasRemaining)
+	if err := st.gp.ReturnGas(st.gasRemaining.RegularGas, st.gasUsed()); err != nil {
+		return nil, err
+	}
 
 	effectiveTip := msg.GasPrice
 	if rules.IsLondon {

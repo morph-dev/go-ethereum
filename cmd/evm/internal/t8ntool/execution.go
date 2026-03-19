@@ -210,12 +210,11 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 			vmContext.BlobBaseFee = eip4844.CalcBlobFee(chainConfig, header)
 		}
 	}
-	var balTracer *core.BlockAccessListTracer
-	if chainConfig.IsAmsterdam(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp) ||
-		chainConfig.IsBogota(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp) {
-		if vmConfig.Tracer == nil {
-			balTracer, vmConfig.Tracer = core.NewBlockAccessListTracer()
-		}
+	trackBAL := chainConfig.IsAmsterdam(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp) ||
+		chainConfig.IsBogota(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp)
+	var computedAccessList bal.ConstructionBlockAccessList
+	if trackBAL {
+		computedAccessList = make(bal.ConstructionBlockAccessList)
 	}
 	// If DAO is supported/enabled, we need to handle it here. In geth 'proper', it's
 	// done in StateProcessor.Process(block, ...), right before transactions are applied.
@@ -230,14 +229,20 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 	}
 	evm := vm.NewEVM(vmContext, tracingStateDB, chainConfig, vmConfig)
 	if beaconRoot := pre.Env.ParentBeaconBlockRoot; beaconRoot != nil {
-		core.ProcessBeaconBlockRoot(*beaconRoot, evm)
+		muts := core.ProcessBeaconBlockRoot(*beaconRoot, evm)
+		if trackBAL {
+			computedAccessList.AccumulateMutations(muts, 0)
+		}
 	}
 	if pre.Env.BlockHashes != nil && chainConfig.IsPrague(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp) {
 		var (
 			prevNumber = pre.Env.Number - 1
 			prevHash   = pre.Env.BlockHashes[math.HexOrDecimal64(prevNumber)]
 		)
-		core.ProcessParentBlockHash(prevHash, evm)
+		muts := core.ProcessParentBlockHash(prevHash, evm)
+		if trackBAL {
+			computedAccessList.AccumulateMutations(muts, 0)
+		}
 	}
 	for i := 0; txIt.Next(); i++ {
 		tx, err := txIt.Tx()
@@ -273,7 +278,7 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 			snapshot = statedb.Snapshot()
 			gp       = gaspool.Snapshot()
 		)
-		_, receipt, err := core.ApplyTransactionWithEVM(msg, gaspool, statedb, vmContext.BlockNumber, blockHash, pre.Env.Timestamp, tx, evm)
+		mutations, receipt, err := core.ApplyTransactionWithEVM(msg, gaspool, statedb, vmContext.BlockNumber, blockHash, pre.Env.Timestamp, tx, evm)
 		if err != nil {
 			statedb.RevertToSnapshot(snapshot)
 			log.Info("rejected tx", "index", i, "hash", tx.Hash(), "from", msg.From, "error", err)
@@ -290,17 +295,15 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		}
 		blobGasUsed += txBlobGas
 		receipts = append(receipts, receipt)
+		if trackBAL {
+			computedAccessList.AccumulateMutations(mutations, uint16(len(receipts)))
+		}
 	}
 
 	statedb.IntermediateRoot(chainConfig.IsEIP158(vmContext.BlockNumber))
 
 	// Add mining reward? (-1 means rewards are disabled)
-	if miningReward >= 0 {
-		// Add mining reward. The mining reward may be `0`, which only makes a difference in the cases
-		// where
-		// - the coinbase self-destructed, or
-		// - there are only 'bad' transactions, which aren't executed. In those cases,
-		//   the coinbase gets no txfee, so isn't created, and thus needs to be touched
+	if miningReward > 0 {
 		var (
 			blockReward = big.NewInt(miningReward)
 			minerReward = new(big.Int).Set(blockReward)
@@ -342,12 +345,27 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 			return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not parse requests logs: %v", err))
 		}
 		// EIP-7002
-		if _, err := core.ProcessWithdrawalQueue(&requests, evm); err != nil {
+		withdrawalMut, err := core.ProcessWithdrawalQueue(&requests, evm)
+		if err != nil {
 			return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not process withdrawal requests: %v", err))
 		}
+		if trackBAL {
+			computedAccessList.AccumulateMutations(withdrawalMut, uint16(len(receipts))+1)
+		}
 		// EIP-7251
-		if _, err := core.ProcessConsolidationQueue(&requests, evm); err != nil {
+		consolidationMut, err := core.ProcessConsolidationQueue(&requests, evm)
+		if err != nil {
 			return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not process consolidation requests: %v", err))
+		}
+		if trackBAL {
+			computedAccessList.AccumulateMutations(consolidationMut, uint16(len(receipts))+1)
+		}
+	}
+
+	var stateAccesses bal.StateAccesses
+	if trackBAL {
+		if tracker, ok := statedb.Reader().(state.StateReaderTracker); ok {
+			stateAccesses = tracker.GetStateAccessList()
 		}
 	}
 
@@ -394,9 +412,9 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		}
 		execRs.Requests = requests
 	}
-	if balTracer != nil {
-		balTracer.OnBlockFinalization()
-		blockAccessList := balTracer.AccessList().ToEncodingObj()
+	if trackBAL {
+		computedAccessList.AccumulateReads(stateAccesses)
+		blockAccessList := computedAccessList.ToEncodingObj()
 		blockAccessListHash := blockAccessList.Hash()
 		encodedBlockAccessList := executionBlockAccessList(*blockAccessList)
 		execRs.BlockAccessList = &encodedBlockAccessList
@@ -424,6 +442,9 @@ func MakePreState(db ethdb.Database, accounts types.GenesisAlloc, isBintrie bool
 	if err != nil {
 		panic(fmt.Errorf("failed to create initial statedb: %v", err))
 	}
+	if _, ok := statedb.Reader().(state.StateReaderTracker); !ok {
+		statedb = statedb.WithReader(state.NewReaderWithTracker(statedb.Reader()))
+	}
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code, tracing.CodeChangeUnspecified)
 		statedb.SetNonce(addr, a.Nonce, tracing.NonceChangeGenesis)
@@ -445,6 +466,9 @@ func MakePreState(db ethdb.Database, accounts types.GenesisAlloc, isBintrie bool
 	statedb, err = state.New(root, sdb)
 	if err != nil {
 		panic(fmt.Errorf("failed to reopen state after commit: %v", err))
+	}
+	if _, ok := statedb.Reader().(state.StateReaderTracker); !ok {
+		statedb = statedb.WithReader(state.NewReaderWithTracker(statedb.Reader()))
 	}
 	return statedb
 }
@@ -552,7 +576,7 @@ func (b *executionBlockAccessList) MarshalJSON() ([]byte, error) {
 		}
 		for _, codeChange := range account.CodeChanges {
 			item.CodeChanges = append(item.CodeChanges, executionBALCodeChange{
-				BlockAccessIndex: formatHexUint64(uint64(codeChange.TxIdx)),
+				BlockAccessIndex: formatHexUint64(uint64(codeChange.TxIndex)),
 				NewCode:          hexutil.Bytes(codeChange.Code),
 			})
 		}
