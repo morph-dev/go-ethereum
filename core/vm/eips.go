@@ -622,24 +622,24 @@ func enable8141(jt *JumpTable) {
 		maxStack:    maxStack(3, 0),
 		memorySize:  memoryApprove,
 	}
-	jt[TXPARAMLOAD] = &operation{
-		execute:     opTxParamLoad,
-		constantGas: GasFastestStep,
-		minStack:    minStack(3, 1),
-		maxStack:    maxStack(3, 1),
-	}
-	jt[TXPARAMSIZE] = &operation{
-		execute:     opTxParamSize,
+	jt[TXPARAM] = &operation{
+		execute:     opTxParam,
 		constantGas: GasQuickStep,
 		minStack:    minStack(2, 1),
 		maxStack:    maxStack(2, 1),
 	}
-	jt[TXPARAMCOPY] = &operation{
-		execute:     opTxParamCopy,
+	jt[FRAMEDATALOAD] = &operation{
+		execute:     opFrameDataLoad,
 		constantGas: GasFastestStep,
-		dynamicGas:  gasTxParamCopy,
-		minStack:    minStack(5, 0),
-		maxStack:    maxStack(5, 0),
-		memorySize:  memoryTxParamCopy,
+		minStack:    minStack(2, 1),
+		maxStack:    maxStack(2, 1),
+	}
+	jt[FRAMEDATACOPY] = &operation{
+		execute:     opFrameDataCopy,
+		constantGas: GasFastestStep,
+		dynamicGas:  gasFrameDataCopy,
+		minStack:    minStack(4, 0),
+		maxStack:    maxStack(4, 0),
+		memorySize:  memoryFrameDataCopy,
 	}
 }

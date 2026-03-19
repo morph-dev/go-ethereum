@@ -98,7 +98,6 @@ type FrameContext struct {
 	CurrentFrame         int
 	CurrentTarget        common.Address
 	CurrentFrameApproved bool
-	CurrentFrameStatus   uint64
 	FrameStatuses        []uint64
 	FrameSStoreOriginals map[common.Address]map[common.Hash]common.Hash
 
@@ -184,8 +183,10 @@ func NewEVM(blockCtx BlockContext, statedb StateDB, chainConfig *params.ChainCon
 	evm.precompiles = activePrecompiledContracts(evm.chainRules)
 
 	switch {
-	case evm.chainRules.IsBogota || evm.chainRules.IsAmsterdam:
+	case evm.chainRules.IsBogota:
 		evm.table = &bogotaInstructionSet
+	case evm.chainRules.IsAmsterdam:
+		evm.table = &amsterdamInstructionSet
 	case evm.chainRules.IsOsaka:
 		evm.table = &osakaInstructionSet
 	case evm.chainRules.IsVerkle:

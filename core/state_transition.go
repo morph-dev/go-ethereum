@@ -414,6 +414,16 @@ func (st *stateTransition) preCheck() error {
 			}
 		}
 	}
+	if isFrameTx {
+		hasBlobHashes := len(msg.BlobHashes) > 0
+		hasBlobFeeCap := msg.BlobGasFeeCap != nil && msg.BlobGasFeeCap.Sign() != 0
+		switch {
+		case hasBlobHashes && !hasBlobFeeCap:
+			return types.ErrFrameTxInvalidBlobFields
+		case !hasBlobHashes && hasBlobFeeCap:
+			return types.ErrFrameTxInvalidBlobFields
+		}
+	}
 	// Check the blob version validity
 	if msg.BlobHashes != nil {
 		if !isFrameTx {
@@ -718,13 +728,22 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 	}
 	st.state.Prepare(rules, msg.From, st.evm.Context.Coinbase, nil, vm.ActivePrecompiles(rules), nil)
 
-	maxCost := new(big.Int).Mul(new(big.Int).SetUint64(msg.GasLimit), msg.GasPrice)
+	maxCost := new(big.Int)
+	if msg.GasFeeCap != nil {
+		maxCost.Mul(new(big.Int).SetUint64(msg.GasLimit), msg.GasFeeCap)
+	}
+	if blobGas := st.blobGasUsed(); blobGas > 0 && msg.BlobGasFeeCap != nil {
+		blobFeeCap := new(big.Int).SetUint64(blobGas)
+		blobFeeCap.Mul(blobFeeCap, msg.BlobGasFeeCap)
+		maxCost.Add(maxCost, blobFeeCap)
+	}
+	txFee := new(big.Int).Mul(new(big.Int).SetUint64(msg.GasLimit), msg.GasPrice)
 	if blobGas := st.blobGasUsed(); blobGas > 0 {
 		blobFee := new(big.Int).SetUint64(blobGas)
 		blobFee.Mul(blobFee, st.evm.Context.BlobBaseFee)
-		maxCost.Add(maxCost, blobFee)
+		txFee.Add(txFee, blobFee)
 	}
-	upfrontCost, overflow := uint256.FromBig(maxCost)
+	upfrontCost, overflow := uint256.FromBig(txFee)
 	if overflow {
 		return nil, fmt.Errorf("%w: upfront cost exceeds 256 bits", ErrInsufficientFunds)
 	}
@@ -769,7 +788,6 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 	for i, frame := range msg.Frames {
 		frameCtx.CurrentFrame = i
 		frameCtx.CurrentFrameApproved = false
-		frameCtx.CurrentFrameStatus = 0
 
 		target := msg.FrameSender
 		if frame.Target != nil {
@@ -777,8 +795,9 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 		}
 		frameCtx.CurrentTarget = target
 
+		execMode := frame.Mode & types.FrameTxModeMask
 		var caller common.Address
-		switch frame.Mode {
+		switch execMode {
 		case types.FrameTxModeDefault, types.FrameTxModeVerify:
 			caller = params.FrameTxEntryPoint
 		case types.FrameTxModeSender:
@@ -794,6 +813,10 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 		st.state.AddAddressToAccessList(caller)
 		st.state.AddAddressToAccessList(msg.FrameSender)
 
+		senderApprovedBefore := frameCtx.SenderApproved
+		payerApprovedBefore := frameCtx.PayerApproved
+		payerBefore := frameCtx.Payer
+
 		var logsBefore int
 		if logProvider != nil {
 			logsBefore = len(logProvider.GetLogs(msg.TxHash, 0, common.Hash{}, 0))
@@ -803,10 +826,15 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 			leftOverGas uint64
 			vmerr       error
 		)
-		if frame.Mode == types.FrameTxModeVerify {
+		if execMode == types.FrameTxModeVerify {
 			_, leftOverGas, vmerr = st.evm.StaticCall(caller, target, frame.Data, frame.GasLimit)
 		} else {
 			_, leftOverGas, vmerr = st.evm.Call(caller, target, frame.Data, frame.GasLimit, common.U2560)
+		}
+		if vmerr != nil {
+			frameCtx.SenderApproved = senderApprovedBefore
+			frameCtx.PayerApproved = payerApprovedBefore
+			frameCtx.Payer = payerBefore
 		}
 		gasUsed := frame.GasLimit - leftOverGas
 		if st.gasRemaining < gasUsed {
@@ -814,13 +842,13 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 		}
 		st.gasRemaining -= gasUsed
 
+		if execMode == types.FrameTxModeVerify && (!frameCtx.CurrentFrameApproved || vmerr != nil) {
+			return nil, ErrFrameTxInvalidExecution
+		}
+
 		status := uint64(0)
 		if vmerr == nil {
-			if frameCtx.CurrentFrameStatus != 0 {
-				status = frameCtx.CurrentFrameStatus
-			} else {
-				status = 1
-			}
+			status = 1
 		}
 		var frameLogs []*types.Log
 		if logProvider != nil {
@@ -831,11 +859,6 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 		}
 		frameReceipts = append(frameReceipts, types.FrameReceipt{Status: status, GasUsed: gasUsed, Logs: frameLogs})
 		frameCtx.FrameStatuses = append(frameCtx.FrameStatuses, status)
-
-		if frame.Mode == types.FrameTxModeVerify && (!frameCtx.CurrentFrameApproved || vmerr != nil) {
-			return nil, ErrFrameTxInvalidExecution
-		}
-
 		st.state.ClearTransientStorage()
 	}
 

@@ -32,6 +32,23 @@ var (
 	errInvalidTxParam     = errors.New("invalid tx parameter")
 )
 
+func frameExecutionMode(mode uint64) uint64 {
+	return mode & types.FrameTxModeMask
+}
+
+func approveScopeAllowed(mode uint64, scope uint64) bool {
+	switch (mode >> 8) & 0x3 {
+	case 0:
+		return false
+	case 1:
+		return scope == 0
+	case 2:
+		return scope == 1
+	default:
+		return scope <= 2
+	}
+}
+
 func opApprove(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	fc := evm.TxContext.FrameContext
 	if fc == nil {
@@ -41,27 +58,22 @@ func opApprove(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	length := scope.Stack.pop()
 	scopeArg := scope.Stack.pop()
 
-	if scope.Contract.Caller() != fc.CurrentTarget && scope.Contract.Address() != fc.CurrentTarget {
-		return nil, errInvalidFrameOpcode
-	}
 	scopeValue, overflow := scopeArg.Uint64WithOverflow()
 	if overflow || scopeValue > 2 {
 		return nil, errInvalidFrameOpcode
 	}
+	if fc.CurrentFrame < 0 || fc.CurrentFrame >= len(fc.Frames) {
+		return nil, errInvalidFrameOpcode
+	}
+	frame := fc.Frames[fc.CurrentFrame]
+	if !approveScopeAllowed(frame.Mode, scopeValue) {
+		return nil, errInvalidFrameOpcode
+	}
+	if scope.Contract.Address() != fc.CurrentTarget {
+		return nil, ErrExecutionReverted
+	}
 
 	ret := scope.Memory.GetCopy(offset.Uint64(), length.Uint64())
-
-	currentMode := types.FrameTxModeDefault
-	if fc.CurrentFrame >= 0 && fc.CurrentFrame < len(fc.Frames) {
-		currentMode = fc.Frames[fc.CurrentFrame].Mode
-	}
-	if currentMode != types.FrameTxModeVerify {
-		fc.CurrentFrameApproved = true
-		fc.CurrentFrameStatus = scopeValue + 2
-		evm.frameCallStatus = fc.CurrentFrameStatus
-		return ret, errStopToken
-	}
-
 	senderNonce := evm.StateDB.GetNonce(fc.Sender)
 	collectPayment := func() error {
 		if senderNonce+1 < senderNonce {
@@ -105,21 +117,19 @@ func opApprove(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 		return nil, errInvalidFrameOpcode
 	}
 	fc.CurrentFrameApproved = true
-	fc.CurrentFrameStatus = scopeValue + 2
-	evm.frameCallStatus = fc.CurrentFrameStatus
+	evm.frameCallStatus = 1
 	return ret, errStopToken
 }
 
-func opTxParamLoad(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+func opTxParam(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	fc := evm.TxContext.FrameContext
 	if fc == nil {
 		return nil, errInvalidTxParam
 	}
-	in1 := scope.Stack.pop()
+	param := scope.Stack.pop()
 	in2 := scope.Stack.pop()
-	offset := scope.Stack.pop()
 
-	selector, overflow := in1.Uint64WithOverflow()
+	selector, overflow := param.Uint64WithOverflow()
 	if overflow {
 		return nil, errInvalidTxParam
 	}
@@ -127,75 +137,80 @@ func opTxParamLoad(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	if overflow {
 		return nil, errInvalidTxParam
 	}
-	off, overflow := offset.Uint64WithOverflow()
-	if overflow {
-		off = math.MaxUint64
-	}
-	param, err := frameTxParamBytes(evm, fc, selector, index)
+	word, err := frameTxParamWord(evm, fc, selector, index)
 	if err != nil {
 		return nil, err
 	}
-	word := getData(param, off, 32)
 	scope.Stack.push(new(uint256.Int).SetBytes(word))
 	return nil, nil
 }
 
-func opTxParamSize(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+func opFrameDataLoad(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	fc := evm.TxContext.FrameContext
 	if fc == nil {
 		return nil, errInvalidTxParam
 	}
-	in1 := scope.Stack.pop()
-	in2 := scope.Stack.pop()
+	offset := scope.Stack.pop()
+	frameIndex := scope.Stack.pop()
 
-	selector, overflow := in1.Uint64WithOverflow()
+	idx, overflow := frameIndex.Uint64WithOverflow()
 	if overflow {
 		return nil, errInvalidTxParam
 	}
-	index, overflow := in2.Uint64WithOverflow()
-	if overflow {
-		return nil, errInvalidTxParam
-	}
-	param, err := frameTxParamBytes(evm, fc, selector, index)
+	frame, err := frameByIndex(fc, idx)
 	if err != nil {
 		return nil, err
 	}
-	scope.Stack.push(new(uint256.Int).SetUint64(uint64(len(param))))
-	return nil, nil
-}
-
-func opTxParamCopy(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
-	fc := evm.TxContext.FrameContext
-	if fc == nil {
-		return nil, errInvalidTxParam
-	}
-	in1 := scope.Stack.pop()
-	in2 := scope.Stack.pop()
-	destOffset := scope.Stack.pop()
-	offset := scope.Stack.pop()
-	length := scope.Stack.pop()
-
-	selector, overflow := in1.Uint64WithOverflow()
-	if overflow {
-		return nil, errInvalidTxParam
-	}
-	index, overflow := in2.Uint64WithOverflow()
-	if overflow {
-		return nil, errInvalidTxParam
+	if frameExecutionMode(frame.Mode) == types.FrameTxModeVerify {
+		scope.Stack.push(new(uint256.Int))
+		return nil, nil
 	}
 	off, overflow := offset.Uint64WithOverflow()
 	if overflow {
 		off = math.MaxUint64
 	}
-	param, err := frameTxParamBytes(evm, fc, selector, index)
-	if err != nil {
-		return nil, err
-	}
-	scope.Memory.Set(destOffset.Uint64(), length.Uint64(), getData(param, off, length.Uint64()))
+	scope.Stack.push(new(uint256.Int).SetBytes(getData(frame.Data, off, 32)))
 	return nil, nil
 }
 
-func frameTxParamBytes(evm *EVM, fc *FrameContext, selector uint64, index uint64) ([]byte, error) {
+func opFrameDataCopy(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	fc := evm.TxContext.FrameContext
+	if fc == nil {
+		return nil, errInvalidTxParam
+	}
+	memOffset := scope.Stack.pop()
+	dataOffset := scope.Stack.pop()
+	length := scope.Stack.pop()
+	frameIndex := scope.Stack.pop()
+
+	idx, overflow := frameIndex.Uint64WithOverflow()
+	if overflow {
+		return nil, errInvalidTxParam
+	}
+	frame, err := frameByIndex(fc, idx)
+	if err != nil {
+		return nil, err
+	}
+	off, overflow := dataOffset.Uint64WithOverflow()
+	if overflow {
+		off = math.MaxUint64
+	}
+	if frameExecutionMode(frame.Mode) == types.FrameTxModeVerify {
+		scope.Memory.Set(memOffset.Uint64(), length.Uint64(), make([]byte, length.Uint64()))
+		return nil, nil
+	}
+	scope.Memory.Set(memOffset.Uint64(), length.Uint64(), getData(frame.Data, off, length.Uint64()))
+	return nil, nil
+}
+
+func frameByIndex(fc *FrameContext, i uint64) (*types.FrameTxFrame, error) {
+	if i >= uint64(len(fc.Frames)) {
+		return nil, errInvalidTxParam
+	}
+	return &fc.Frames[i], nil
+}
+
+func frameTxParamWord(evm *EVM, fc *FrameContext, selector uint64, index uint64) ([]byte, error) {
 	asUint := func(v uint64) []byte {
 		out := make([]byte, 32)
 		new(uint256.Int).SetUint64(v).WriteToSlice(out)
@@ -217,13 +232,6 @@ func frameTxParamBytes(evm *EVM, fc *FrameContext, selector uint64, index uint64
 		out := make([]byte, 32)
 		u.WriteToSlice(out)
 		return out, nil
-	}
-
-	frameByIndex := func(i uint64) (*types.FrameTxFrame, error) {
-		if i >= uint64(len(fc.Frames)) {
-			return nil, errInvalidTxParam
-		}
-		return &fc.Frames[i], nil
 	}
 
 	switch selector {
@@ -285,36 +293,35 @@ func frameTxParamBytes(evm *EVM, fc *FrameContext, selector uint64, index uint64
 		}
 		return asUint(uint64(fc.CurrentFrame)), nil
 	case 0x11:
-		frame, err := frameByIndex(index)
+		frame, err := frameByIndex(fc, index)
 		if err != nil {
 			return nil, err
 		}
-		target := fc.Sender
-		if frame.Target != nil {
-			target = *frame.Target
+		if frame.Target == nil {
+			return make([]byte, 32), nil
 		}
-		return asAddress(target), nil
+		return asAddress(*frame.Target), nil
 	case 0x12:
-		frame, err := frameByIndex(index)
-		if err != nil {
-			return nil, err
-		}
-		if frame.Mode == types.FrameTxModeVerify {
-			return nil, nil
-		}
-		return frame.Data, nil
-	case 0x13:
-		frame, err := frameByIndex(index)
+		frame, err := frameByIndex(fc, index)
 		if err != nil {
 			return nil, err
 		}
 		return asUint(frame.GasLimit), nil
-	case 0x14:
-		frame, err := frameByIndex(index)
+	case 0x13:
+		frame, err := frameByIndex(fc, index)
 		if err != nil {
 			return nil, err
 		}
-		return asUint(uint64(frame.Mode)), nil
+		return asUint(frame.Mode), nil
+	case 0x14:
+		frame, err := frameByIndex(fc, index)
+		if err != nil {
+			return nil, err
+		}
+		if frameExecutionMode(frame.Mode) == types.FrameTxModeVerify {
+			return make([]byte, 32), nil
+		}
+		return asUint(uint64(len(frame.Data))), nil
 	case 0x15:
 		if index >= uint64(fc.CurrentFrame) || index >= uint64(len(fc.FrameStatuses)) {
 			return nil, errInvalidTxParam
