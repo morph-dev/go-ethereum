@@ -220,6 +220,17 @@ var (
 		},
 	}
 
+	frameCommand = &cli.Command{
+		Name:    "frame",
+		Aliases: []string{"frm"},
+		Usage:   "Utility for frame transactions (EIP-8141)",
+		Action:  t8ntool.FrameAction,
+		Flags: []cli.Flag{
+			t8ntool.InputTxsFlag,
+			t8ntool.ChainIDFlag,
+		},
+	}
+
 	blockBuilderCommand = &cli.Command{
 		Name:    "block-builder",
 		Aliases: []string{"b11r"},
@@ -261,6 +272,7 @@ func init() {
 		stateTestCommand,
 		stateTransitionCommand,
 		transactionCommand,
+		frameCommand,
 		blockBuilderCommand,
 		verkleCommand,
 	}

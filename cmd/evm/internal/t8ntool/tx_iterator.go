@@ -36,16 +36,18 @@ import (
 // txWithKey is a helper-struct, to allow us to use the types.Transaction along with
 // a `secretKey`-field, for input
 type txWithKey struct {
-	key       *ecdsa.PrivateKey
-	tx        *types.Transaction
-	protected bool
+	key          *ecdsa.PrivateKey
+	tx           *types.Transaction
+	protected    bool
+	verifyFrames []verifyFrame
 }
 
 func (t *txWithKey) UnmarshalJSON(input []byte) error {
 	// Read the metadata, if present
 	type txMetadata struct {
-		Key       *common.Hash `json:"secretKey"`
-		Protected *bool        `json:"protected"`
+		Key          *common.Hash  `json:"secretKey"`
+		Protected    *bool         `json:"protected"`
+		VerifyFrames []verifyFrame `json:"verifyFrames"`
 	}
 	var data txMetadata
 	if err := json.Unmarshal(input, &data); err != nil {
@@ -63,6 +65,9 @@ func (t *txWithKey) UnmarshalJSON(input []byte) error {
 		t.protected = *data.Protected
 	} else {
 		t.protected = true
+	}
+	if data.VerifyFrames != nil {
+		t.verifyFrames = data.VerifyFrames
 	}
 	// Now, read the transaction itself
 	var tx types.Transaction
@@ -92,6 +97,13 @@ func signUnsignedTransactions(txs []*txWithKey, signer types.Signer) (types.Tran
 			if tx.key != nil {
 				return nil, NewError(ErrorJson, fmt.Errorf("tx %d: frame transaction cannot be signed with secretKey", i))
 			}
+
+			for _, vf := range tx.verifyFrames {
+				if err := vf.sign(signer, tx.tx); err != nil {
+					return nil, NewError(ErrorJson, fmt.Errorf("tx %d: failed to sign frame %d: %w", i, vf.index, err))
+				}
+			}
+
 			signedTxs = append(signedTxs, tx.tx)
 			continue
 		}

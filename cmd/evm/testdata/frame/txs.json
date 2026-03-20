@@ -1,0 +1,54 @@
+[
+  {
+    "type": "0x6",
+    "chainId" : "0x1",
+    "nonce" : "0x0",
+    "sender": "0x1111111111111111111111111111111111111111",
+    "frames": [
+        {
+            "mode": "0x301",
+            "target": null,
+            "gasLimit": "0x5208"
+        }
+    ],
+    "maxPriorityFeePerGas": "0x11",
+    "maxFeePerGas": "0x22",
+    "maxFeePerBlobGas": "0x0",
+    "blobVersionedHashes": [],
+
+    "verifyFrames": [
+        {
+            "index": 0,
+            "dataTemplate": "0x30{{.V}}{{.R}}{{.S}}",
+            "curve": "secp256k1",
+            "key" : "0x45a915e4d060149eb4365960e6a7a45f334393093061116b197e3240065ff2d8"
+        }
+    ]
+  },
+  {
+    "type": "0x6",
+    "chainId" : "0x1",
+    "nonce" : "0x0",
+    "sender": "0x2222222222222222222222222222222222222222",
+    "frames": [
+        {
+            "mode": "0x301",
+            "target": null,
+            "gasLimit": "0x5208"
+        }
+    ],
+    "maxPriorityFeePerGas": "0x11",
+    "maxFeePerGas": "0x22",
+    "maxFeePerBlobGas": "0x0",
+    "blobVersionedHashes": [],
+
+    "verifyFrames": [
+        {
+            "index": 0,
+            "dataTemplate": "0x30{{.R}}{{.S}}{{.Qx}}{{.Qy}}",
+            "curve": "p256",
+            "key" : "0x45a915e4d060149eb4365960e6a7a45f334393093061116b197e3240065ff2d8"
+        }
+    ]
+  }
+]
