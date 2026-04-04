@@ -711,7 +711,7 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 		frameCtx.CurrentTarget = target
 
 		var caller common.Address
-		switch frame.Mode {
+		switch frame.Mode() {
 		case types.FrameTxModeDefault, types.FrameTxModeVerify:
 			caller = params.FrameTxEntryPoint
 		case types.FrameTxModeSender:
@@ -736,7 +736,7 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 			leftOverGas uint64
 			vmerr       error
 		)
-		if frame.Mode == types.FrameTxModeVerify {
+		if frame.Mode() == types.FrameTxModeVerify {
 			_, leftOverGas, vmerr = st.evm.StaticCall(caller, target, frame.Data, frame.GasLimit)
 		} else {
 			_, leftOverGas, vmerr = st.evm.Call(caller, target, frame.Data, frame.GasLimit, common.U2560)
@@ -765,7 +765,7 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 		frameReceipts = append(frameReceipts, types.FrameReceipt{Status: status, GasUsed: gasUsed, Logs: frameLogs})
 		frameCtx.FrameStatuses = append(frameCtx.FrameStatuses, status)
 
-		if frame.Mode == types.FrameTxModeVerify && (!frameCtx.CurrentFrameApproved || vmerr != nil) {
+		if frame.Mode() == types.FrameTxModeVerify && (!frameCtx.CurrentFrameApproved || vmerr != nil) {
 			return nil, ErrFrameTxInvalidExecution
 		}
 

@@ -42,6 +42,8 @@ var (
 	errInvalidYParity       = errors.New("'yParity' field must be 0 or 1")
 	errVYParityMismatch     = errors.New("'v' and 'yParity' fields do not match")
 	errVYParityMissing      = errors.New("missing 'yParity' or 'v' field in transaction")
+	errExpectedFrameTx      = errors.New("transaction type doesn't support frames")
+	errExpectedVerifyFrame  = errors.New("verify frame expected")
 )
 
 // Transaction types.
@@ -643,6 +645,22 @@ func (tx *Transaction) WithSignature(signer Signer, sig []byte) (*Transaction, e
 	cpy := tx.inner.copy()
 	cpy.setSignatureValues(signer.ChainID(), v, r, s)
 	return &Transaction{inner: cpy, time: tx.time}, nil
+}
+
+// SetFrameData sets frame's data field.
+func (tx *Transaction) WithVerifyFrameData(frameIdx uint, data []byte) (*Transaction, error) {
+	frametx, ok := tx.inner.copy().(*FrameTx)
+	if !ok {
+		return nil, errExpectedFrameTx
+	}
+	if int(frameIdx) >= len(frametx.Frames) {
+		return nil, fmt.Errorf("invalid frame index %d", frameIdx)
+	}
+	if frametx.Frames[frameIdx].Mode() != FrameTxModeVerify {
+		return nil, errExpectedVerifyFrame
+	}
+	frametx.Frames[frameIdx].Data = data
+	return &Transaction{inner: frametx, time: tx.time}, nil
 }
 
 // Transactions implements DerivableList for transactions.

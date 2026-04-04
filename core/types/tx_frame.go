@@ -36,18 +36,26 @@ var (
 	ErrFrameTxInvalidBlobFields = errors.New("invalid frame tx blob fields")
 )
 
+type FrameTxMode = uint8
+type FrameTxScope = uint8
+
 const (
 	FrameTxModeDefault uint8 = 0
 	FrameTxModeVerify  uint8 = 1
 	FrameTxModeSender  uint8 = 2
+
+	FrameTxScopeNone   uint8 = 0
+	FrameTxScopeSender uint8 = 1
+	FrameTxScopePayer  uint8 = 2
+	FrameTxScopeBoth   uint8 = 3
 )
 
 // FrameTxFrame is a single frame in a frame transaction.
 type FrameTxFrame struct {
-	Mode     uint8
-	Target   *common.Address `rlp:"nil"` // nil means sender
-	GasLimit uint64
-	Data     []byte
+	ScopeMode uint16
+	Target    *common.Address `rlp:"nil"` // nil means sender
+	GasLimit  uint64
+	Data      []byte
 }
 
 type frameTxFrameJSON struct {
@@ -59,7 +67,7 @@ type frameTxFrameJSON struct {
 
 func (f FrameTxFrame) MarshalJSON() ([]byte, error) {
 	enc := frameTxFrameJSON{
-		Mode:     hexutil.Uint64(f.Mode),
+		Mode:     hexutil.Uint64(f.ScopeMode),
 		Target:   f.Target,
 		GasLimit: hexutil.Uint64(f.GasLimit),
 		Data:     f.Data,
@@ -72,11 +80,19 @@ func (f *FrameTxFrame) UnmarshalJSON(input []byte) error {
 	if err := json.Unmarshal(input, &dec); err != nil {
 		return err
 	}
-	f.Mode = uint8(dec.Mode)
+	f.ScopeMode = uint16(dec.Mode)
 	f.Target = dec.Target
 	f.GasLimit = uint64(dec.GasLimit)
 	f.Data = dec.Data
 	return nil
+}
+
+func (f *FrameTxFrame) Mode() FrameTxMode {
+	return uint8(f.ScopeMode & 0xFF)
+}
+
+func (f *FrameTxFrame) Scope() FrameTxScope {
+	return uint8(f.ScopeMode>>8) & FrameTxScopeBoth
 }
 
 // FrameTx represents an EIP-8141 frame transaction.
@@ -111,10 +127,10 @@ func (tx *FrameTx) copy() TxData {
 			target = &t
 		}
 		cpy.Frames[i] = FrameTxFrame{
-			Mode:     frame.Mode,
-			Target:   target,
-			GasLimit: frame.GasLimit,
-			Data:     common.CopyBytes(frame.Data),
+			ScopeMode: frame.ScopeMode,
+			Target:    target,
+			GasLimit:  frame.GasLimit,
+			Data:      common.CopyBytes(frame.Data),
 		}
 	}
 	copy(cpy.BlobVersionedHashes, tx.BlobVersionedHashes)
@@ -212,7 +228,10 @@ func (tx *FrameTx) validate() error {
 		return ErrFrameTxInvalidFormat
 	}
 	for _, frame := range tx.Frames {
-		if frame.Mode > FrameTxModeSender {
+		if frame.Mode() > FrameTxModeSender {
+			return ErrFrameTxInvalidFormat
+		}
+		if frame.Scope() > FrameTxScopeBoth {
 			return ErrFrameTxInvalidFormat
 		}
 	}
@@ -236,7 +255,7 @@ func (tx *FrameTx) sigHash(chainID *big.Int) common.Hash {
 	frames := make([]FrameTxFrame, len(tx.Frames))
 	for i, frame := range tx.Frames {
 		frames[i] = frame
-		if frame.Mode == FrameTxModeVerify {
+		if frame.Mode() == FrameTxModeVerify {
 			frames[i].Data = nil
 		} else {
 			frames[i].Data = common.CopyBytes(frame.Data)

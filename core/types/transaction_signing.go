@@ -291,9 +291,7 @@ func (s *modernSigner) SignatureValues(tx *Transaction, sig []byte) (R, S, V *bi
 	if tt == LegacyTxType {
 		return s.legacy.SignatureValues(tx, sig)
 	}
-	if tt == FrameTxType {
-		return nil, nil, nil, errors.New("frame transactions cannot be signed with ECDSA")
-	}
+
 	// Check that chain ID of tx matches the signer. We also accept ID zero here,
 	// because it indicates that the chain ID was not specified in the tx.
 	if tx.inner.chainID().Sign() != 0 && tx.inner.chainID().Cmp(s.chainID) != 0 {

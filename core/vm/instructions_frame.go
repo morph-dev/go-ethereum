@@ -52,8 +52,10 @@ func opApprove(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	ret := scope.Memory.GetCopy(offset.Uint64(), length.Uint64())
 
 	currentMode := types.FrameTxModeDefault
+	currentScope := types.FrameTxScopeNone
 	if fc.CurrentFrame >= 0 && fc.CurrentFrame < len(fc.Frames) {
-		currentMode = fc.Frames[fc.CurrentFrame].Mode
+		currentMode = fc.Frames[fc.CurrentFrame].Mode()
+		currentScope = fc.Frames[fc.CurrentFrame].Scope()
 	}
 	if currentMode != types.FrameTxModeVerify {
 		fc.CurrentFrameApproved = true
@@ -85,9 +87,15 @@ func opApprove(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 		if fc.SenderApproved || fc.CurrentTarget != fc.Sender {
 			return nil, ErrExecutionReverted
 		}
+		if currentScope&types.FrameTxScopeSender != types.FrameTxScopeSender {
+			return nil, ErrExecutionReverted
+		}
 		fc.SenderApproved = true
 	case 1:
 		if fc.PayerApproved || !fc.SenderApproved {
+			return nil, ErrExecutionReverted
+		}
+		if currentScope&types.FrameTxScopePayer != types.FrameTxScopePayer {
 			return nil, ErrExecutionReverted
 		}
 		if err := collectPayment(); err != nil {
@@ -95,6 +103,9 @@ func opApprove(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 		}
 	case 2:
 		if fc.SenderApproved || fc.PayerApproved || fc.CurrentTarget != fc.Sender {
+			return nil, ErrExecutionReverted
+		}
+		if currentScope&types.FrameTxScopeBoth != types.FrameTxScopeBoth {
 			return nil, ErrExecutionReverted
 		}
 		fc.SenderApproved = true
@@ -299,22 +310,22 @@ func frameTxParamBytes(evm *EVM, fc *FrameContext, selector uint64, index uint64
 		if err != nil {
 			return nil, err
 		}
-		if frame.Mode == types.FrameTxModeVerify {
-			return nil, nil
-		}
-		return frame.Data, nil
+		return asUint(frame.GasLimit), nil
 	case 0x13:
 		frame, err := frameByIndex(index)
 		if err != nil {
 			return nil, err
 		}
-		return asUint(frame.GasLimit), nil
+		return asUint(uint64(frame.ScopeMode)), nil
 	case 0x14:
 		frame, err := frameByIndex(index)
 		if err != nil {
 			return nil, err
 		}
-		return asUint(uint64(frame.Mode)), nil
+		if frame.Mode() == types.FrameTxModeVerify {
+			return asUint(0), nil
+		}
+		return asUint(uint64(len(frame.Data))), nil
 	case 0x15:
 		if index >= uint64(fc.CurrentFrame) || index >= uint64(len(fc.FrameStatuses)) {
 			return nil, errInvalidTxParam
