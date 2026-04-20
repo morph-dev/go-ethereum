@@ -784,8 +784,15 @@ func (st *stateTransition) executeFrameTx(rules params.Rules) (*ExecutionResult,
 		GetLogs(common.Hash, uint64, common.Hash, uint64) []*types.Log
 	})
 
+	isValidation := st.evm.Config.FrameTxValidation
+	validationPrefix := int(st.evm.Config.FrameTxValidationPrefix)
+
 	frameReceipts := make([]types.FrameReceipt, 0, len(msg.Frames))
 	for i, frame := range msg.Frames {
+		if isValidation && i >= validationPrefix {
+			break
+		}
+
 		frameCtx.CurrentFrame = i
 		frameCtx.CurrentFrameApproved = false
 

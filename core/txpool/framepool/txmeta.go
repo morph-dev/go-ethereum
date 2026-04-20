@@ -29,6 +29,8 @@ type frameTxMeta struct {
 	sender           common.Address
 	frames           []types.FrameTxFrame
 	validationPrefix validationPrefix
+
+	storageReads map[common.Hash]struct{}
 }
 
 func newTxMeta(tx *types.Transaction) (*frameTxMeta, error) {
@@ -62,4 +64,16 @@ func (f *frameTxMeta) payer() common.Address {
 		return f.sender
 	}
 	return *payer
+}
+
+func (f frameTxMeta) validationFrames() []types.FrameTxFrame {
+	return f.frames[:f.validationPrefix.Length()]
+}
+
+func (f frameTxMeta) validationGasLimit() uint64 {
+	gasLimit := uint64(0)
+	for _, f := range f.validationFrames() {
+		gasLimit += f.GasLimit
+	}
+	return gasLimit
 }

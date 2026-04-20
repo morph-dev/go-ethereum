@@ -53,6 +53,18 @@ func (vp validationPrefix) PayerFrameIndex() uint {
 	panic("unknown validation prefix")
 }
 
+func (vp validationPrefix) Length() uint {
+	switch vp {
+	case validationPrefixSelf:
+		return 1
+	case validationPrefixVerifyPay, validationPrefixDeploySelf:
+		return 2
+	case validationPrefixDeployVerifyPay:
+		return 3
+	}
+	panic("unknown validation prefix")
+}
+
 func getValidationPrefix(sender *common.Address, frames []types.FrameTxFrame) (validationPrefix, bool) {
 	if len(frames) == 0 {
 		return validationPrefixSelf, false

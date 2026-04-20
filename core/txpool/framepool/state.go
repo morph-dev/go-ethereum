@@ -18,26 +18,25 @@ package framepool
 
 import (
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/log"
 )
 
-// BlockChain defines the minimal set of methods needed to back a blob pool with
-// a chain. Exists to allow mocking the live chain out of tests.
-type BlockChain interface {
-	core.ChainContext
+type validationStateTracer struct {
+	sender common.Address
+	reads  map[common.Hash]struct{}
+}
 
-	// Config retrieves the chain's fork configuration.
-	Config() *params.ChainConfig
+func newValidationStateTracer(sender common.Address) *validationStateTracer {
+	return &validationStateTracer{
+		sender: sender,
+		reads:  make(map[common.Hash]struct{}),
+	}
+}
 
-	// CurrentBlock returns the current head of the chain.
-	CurrentBlock() *types.Header
-
-	// GetBlock retrieves a specific block, used during pool resets.
-	GetBlock(hash common.Hash, number uint64) *types.Block
-
-	// StateAt returns a state database for a given root hash (generally the head).
-	StateAt(root common.Hash) (*state.StateDB, error)
+func (t *validationStateTracer) OnStorageRead(addr common.Address, slot common.Hash) {
+	if t.sender != addr {
+		log.Error("frame tx validation accessing non-sender storage", "sender", t.sender, "addr", addr)
+		return
+	}
+	t.reads[slot] = struct{}{}
 }

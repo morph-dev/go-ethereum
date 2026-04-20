@@ -138,8 +138,9 @@ var (
 	ErrGasLimitTooHigh = errors.New("transaction gas limit too high")
 
 	// -- EIP-8141 errors --
-	ErrFrameTxInvalidApproval  = errors.New("invalid frame approval")
-	ErrFrameTxInvalidExecution = errors.New("invalid frame execution")
+	ErrFrameTxInvalidApproval   = errors.New("invalid frame approval")
+	ErrFrameTxInvalidExecution  = errors.New("invalid frame execution")
+	ErrFrameTxInvalidValidation = errors.New("invalid frame validation")
 )
 
 // EIP-7702 state transition errors.

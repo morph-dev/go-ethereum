@@ -74,4 +74,6 @@ var (
 
 	// ErrKZGVerificationError is returned when a KZG proof was not verified correctly.
 	ErrKZGVerificationError = errors.New("KZG verification error")
+
+	ErrFrameTxValidationGasLimit = errors.New("exceeds frame tx validation gas limit")
 )

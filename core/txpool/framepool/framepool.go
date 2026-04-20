@@ -18,6 +18,8 @@
 package framepool
 
 import (
+	"errors"
+	"fmt"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -25,8 +27,10 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -36,9 +40,6 @@ import (
 const (
 	// maxVerifyGas is the maximum cumulative gas the validation prefix can use
 	maxVerifyGas = 100_000
-
-	// maxTxsPerSender is the maximum number of frame transactions admitted from a single sender account
-	maxTxsPerSender = 1
 
 	// maxPendingTxsPerNonCanonicalPaymaster is the maximum number of pending transaction for a non-canonical paymaster
 	maxPendingTxsPerNonCanonicalPaymaster = 1
@@ -71,6 +72,10 @@ type FramePool struct {
 	paymasters map[common.Address]*paymaster   // Paymaster tracking info
 
 	lock sync.RWMutex // Mutex protecting the pool from concurrent access
+
+	newHeadCh  chan *types.Header // channel to notify the loop of the new head
+	loopDoneCh chan struct{}      // channel to notify when loop is finished
+	shutdownCh chan struct{}      // channel to notify when shutdown is requested
 }
 
 // New creates a new transaction pool to gather, sort and filter inbound
@@ -89,6 +94,9 @@ func New(config Config, chain BlockChain) *FramePool {
 		lookup:     make(map[common.Hash]*frameTxMeta),
 		index:      make(map[common.Address]*frameTxMeta),
 		paymasters: make(map[common.Address]*paymaster),
+
+		loopDoneCh: make(chan struct{}),
+		shutdownCh: make(chan struct{}),
 	}
 
 	return pool
@@ -117,6 +125,8 @@ func (p *FramePool) Init(gasTip uint64, head *types.Header, reserver txpool.Rese
 	p.head.Store(head)
 	p.state = statedb
 
+	go p.loop()
+
 	return nil
 }
 
@@ -134,20 +144,36 @@ func (p *FramePool) FilterType(kind byte) bool {
 // Close terminates any background processing threads and releases any held
 // resources.
 func (p *FramePool) Close() error {
-	// TODO
+	close(p.shutdownCh)
+	<-p.loopDoneCh
+
+	log.Info("Frame pool stopped")
 	return nil
 }
 
 // Reset retrieves the current state of the blockchain and ensures the content
 // of the transaction pool is valid with regard to the chain state.
 func (p *FramePool) Reset(oldHead, newHead *types.Header) {
-	// TODO
+	p.newHeadCh <- newHead
 }
 
 // SetGasTip updates the minimum price required by the subpool for a new
 // transaction, and drops all transactions below this threshold.
 func (p *FramePool) SetGasTip(tip *big.Int) {
-	// TODO
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	newTip := uint256.MustFromBig(tip)
+	old := p.gasTip.Load()
+	p.gasTip.Store(newTip)
+
+	if newTip.Cmp(old) > 0 {
+		for _, txMeta := range p.index {
+			if txMeta.tx.GasTipCapIntCmp(tip) < 0 {
+				p.removeTxLocked(txMeta)
+			}
+		}
+	}
 }
 
 // Has returns an indicator whether subpool has a transaction cached with the
@@ -209,14 +235,55 @@ func (p *FramePool) ValidateTxBasics(tx *types.Transaction) error {
 		MinTip:       p.gasTip.Load().ToBig(),
 		MaxBlobCount: maxBlobsPerTx,
 	}
-	return txpool.ValidateTransaction(tx, p.head.Load(), p.signer, opts)
+	if err := txpool.ValidateTransaction(tx, p.head.Load(), p.signer, opts); err != nil {
+		return err
+	}
+
+	txMeta, err := newTxMeta(tx)
+	if err != nil {
+		return err
+	}
+	if txMeta.validationGasLimit() > maxVerifyGas {
+		return txpool.ErrFrameTxValidationGasLimit
+	}
+	return nil
 }
 
 // Add enqueues a batch of transactions into the pool if they are valid. Due
 // to the large transaction churn, add may postpone fully integrating the tx
 // to a later point to batch multiple ones together.
 func (p *FramePool) Add(txs []*types.Transaction, sync bool) []error {
-	// TODO
+	errs := make([]error, len(txs))
+
+	for i, tx := range txs {
+		hash := tx.Hash()
+		if p.Has(hash) {
+			errs[i] = txpool.ErrAlreadyKnown
+			continue
+		}
+
+		if err := p.ValidateTxBasics(tx); err != nil {
+			errs[i] = err
+			continue
+		}
+
+		txMeta, err := newTxMeta(tx)
+		if err != nil {
+			errs[i] = err
+			continue
+		}
+
+		if txMeta.validationGasLimit() > maxVerifyGas {
+			errs[i] = txpool.ErrFrameTxValidationGasLimit
+			continue
+		}
+
+		p.lock.Lock()
+		if err := p.addTxLocked(txMeta); err != nil {
+			errs[i] = err
+		}
+		p.lock.Unlock()
+	}
 	return nil
 }
 
@@ -352,4 +419,99 @@ func (p *FramePool) Clear() {
 	p.lookup = make(map[common.Hash]*frameTxMeta)
 	p.index = make(map[common.Address]*frameTxMeta)
 	p.paymasters = make(map[common.Address]*paymaster)
+}
+
+func (p *FramePool) loop() {
+	defer close(p.loopDoneCh)
+
+	for {
+		select {
+		case <-p.shutdownCh:
+			return
+		case newHead := <-p.newHeadCh:
+			// TODO: do reorg
+			log.Info("reorg", "newHead", newHead)
+		}
+
+	}
+}
+
+// Validates and adds tx to the pool. Updates frameTxMeta.storageReads if successful.
+// Must hold the lock before calling this function.
+func (p *FramePool) addTxLocked(txMeta *frameTxMeta) error {
+	header := p.head.Load()
+
+	if _, exists := p.index[txMeta.sender]; exists {
+		// TODO(EIP-8141): add support for updating transactions
+		log.Warn("upgrading transaction is not yet supported")
+		return fmt.Errorf("transaction for sender %v already exists", txMeta.sender)
+	}
+
+	// Initialize state tracer
+	tracer := newValidationStateTracer(txMeta.sender)
+	hooks := &tracing.Hooks{
+		OnStorageRead: tracer.OnStorageRead,
+	}
+	hookedState := state.NewHookedState(p.state.Copy(), hooks)
+
+	blockContext := core.NewEVMBlockContext(header, p.chain, nil)
+	evmConfig := vm.Config{
+		Tracer:                  hooks,
+		NoBaseFee:               true,
+		FrameTxValidation:       true,
+		FrameTxValidationPrefix: txMeta.validationPrefix.Length(),
+	}
+	evm := vm.NewEVM(blockContext, hookedState, p.chain.Config(), evmConfig)
+
+	msg, err := core.TransactionToMessage(txMeta.tx, p.signer, header.BaseFee)
+	if err != nil {
+		return err
+	}
+
+	gasPool := new(core.GasPool).AddGas(msg.GasLimit)
+
+	res, err := core.ApplyMessage(evm, msg, gasPool)
+	if err != nil {
+		log.Warn("frame tx is invalid", "err", err)
+		return err
+	}
+
+	for i, r := range res.FrameReceipts {
+		if r.Status != 1 {
+			log.Warn("frame tx is invalid", "frame", i, "status", r.Status)
+			return errors.New("frame validation failed")
+		}
+	}
+	txMeta.storageReads = tracer.reads
+
+	payer := txMeta.payer()
+	paymaster, ok := p.paymasters[payer]
+	if !ok {
+		paymaster = newPaymaster(payer, p.state)
+		p.paymasters[payer] = paymaster
+	}
+	if !paymaster.addTx(txMeta) {
+		return errors.New("paymaster insufficient balance")
+	}
+
+	p.index[txMeta.sender] = txMeta
+	p.lookup[txMeta.tx.Hash()] = txMeta
+
+	return nil
+}
+
+// Removes transaction from the pool.
+// Must hold the lock before calling this function.
+func (p *FramePool) removeTxLocked(txMeta *frameTxMeta) {
+	delete(p.index, txMeta.sender)
+	delete(p.lookup, txMeta.tx.Hash())
+
+	payer := txMeta.payer()
+
+	if paymaster, ok := p.paymasters[payer]; ok {
+		paymaster.removeTx(txMeta)
+		if paymaster.isEmpty() {
+			delete(p.paymasters, payer)
+		}
+	}
 }

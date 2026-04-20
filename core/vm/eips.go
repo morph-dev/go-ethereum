@@ -23,6 +23,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 )
@@ -641,5 +642,78 @@ func enable8141(jt *JumpTable) {
 		minStack:    minStack(4, 0),
 		maxStack:    maxStack(4, 0),
 		memorySize:  memoryFrameDataCopy,
+	}
+}
+
+func enableFrameTxValidation(jt *JumpTable) {
+	// Disable not supported codes
+	jt[ORIGIN] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[GASPRICE] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[BLOCKHASH] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[COINBASE] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[TIMESTAMP] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[NUMBER] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[PREVRANDAO] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[GASLIMIT] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[BASEFEE] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[BLOBHASH] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[BLOBBASEFEE] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[CREATE] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[INVALID] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[SELFDESTRUCT] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[BALANCE] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[SELFBALANCE] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[SSTORE] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[TLOAD] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+	jt[TSTORE] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
+
+	opGasExecute := jt[GAS].execute
+	jt[GAS].execute = func(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+		// TODO(EIP-8141): must be followed immediately by a *CALL instruction
+		return opGasExecute(pc, evm, scope)
+	}
+
+	// CREATE2 is allowed inside the first deploy frame when targeting the EIP-7997 deterministic factory predeploy.
+	opCreate2Execute := jt[CREATE2].execute
+	jt[CREATE2].execute = func(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+		fc := evm.FrameContext
+
+		// Check that it's frame transaction
+		if fc == nil || len(fc.Frames) == 0 {
+			return nil, ErrFrameValidation
+		}
+		// Check that it's first frame
+		if fc.CurrentFrame != 0 {
+			return nil, ErrFrameValidation
+		}
+		// Check that current frame has DEFAULT mode
+		if fc.Frames[0].Mode() != types.FrameTxModeDefault {
+			return nil, ErrFrameValidation
+		}
+
+		// TODO(EIP-8141): Use constant from EIP-7997 once it's implemented
+		EIP_7997_FACTORY_ADDRESS := common.BytesToAddress([]uint8{0x12})
+		if scope.Contract.Address() != EIP_7997_FACTORY_ADDRESS {
+			return nil, ErrFrameValidation
+		}
+
+		return opCreate2Execute(pc, evm, scope)
+	}
+
+	// SLOAD can be used only to access tx.sender storage
+	opSloadExecute := jt[SLOAD].execute
+	jt[SLOAD].execute = func(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+		fc := evm.FrameContext
+
+		// Check that it's frame transaction
+		if fc == nil {
+			return nil, ErrFrameValidation
+		}
+		// Check that account is sender
+		if fc.Sender != scope.Contract.Address() {
+			return nil, ErrFrameValidation
+		}
+
+		return opSloadExecute(pc, evm, scope)
 	}
 }
