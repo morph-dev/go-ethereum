@@ -20,7 +20,9 @@ package framepool
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -72,10 +74,6 @@ type FramePool struct {
 	paymasters map[common.Address]*paymaster   // Paymaster tracking info
 
 	lock sync.RWMutex // Mutex protecting the pool from concurrent access
-
-	newHeadCh  chan *types.Header // channel to notify the loop of the new head
-	loopDoneCh chan struct{}      // channel to notify when loop is finished
-	shutdownCh chan struct{}      // channel to notify when shutdown is requested
 }
 
 // New creates a new transaction pool to gather, sort and filter inbound
@@ -94,9 +92,6 @@ func New(config Config, chain BlockChain) *FramePool {
 		lookup:     make(map[common.Hash]*frameTxMeta),
 		index:      make(map[common.Address]*frameTxMeta),
 		paymasters: make(map[common.Address]*paymaster),
-
-		loopDoneCh: make(chan struct{}),
-		shutdownCh: make(chan struct{}),
 	}
 
 	return pool
@@ -125,8 +120,6 @@ func (p *FramePool) Init(gasTip uint64, head *types.Header, reserver txpool.Rese
 	p.head.Store(head)
 	p.state = statedb
 
-	go p.loop()
-
 	return nil
 }
 
@@ -144,9 +137,6 @@ func (p *FramePool) FilterType(kind byte) bool {
 // Close terminates any background processing threads and releases any held
 // resources.
 func (p *FramePool) Close() error {
-	close(p.shutdownCh)
-	<-p.loopDoneCh
-
 	log.Info("Frame pool stopped")
 	return nil
 }
@@ -154,7 +144,115 @@ func (p *FramePool) Close() error {
 // Reset retrieves the current state of the blockchain and ensures the content
 // of the transaction pool is valid with regard to the chain state.
 func (p *FramePool) Reset(oldHead, newHead *types.Header) {
-	p.newHeadCh <- newHead
+	newState, err := p.chain.StateAt(newHead.Hash())
+	if err != nil {
+		log.Error("can't get state", "block hash", newHead.Hash())
+		return
+	}
+
+	reorgDiffs := CalcReorgDiffs(p.chain, oldHead, newHead)
+
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	p.head.Store(newHead)
+	p.state = newState
+
+	if reorgDiffs == nil {
+		// We couldn't obtain all blocks between old and new head.
+		// For now, just remove all txs from pool and add them again.
+		// TODO(EIP-8141): Optimize this case.
+		txs := p.removeAllLocked()
+		for _, tx := range txs {
+			p.addTxLocked(tx, true /* =fromReorg */)
+		}
+		return
+	}
+
+	// Remove all executed transactions
+	for _, tx := range reorgDiffs.ExecutedTransactions {
+		if txMeta, ok := p.lookup[tx.Hash()]; ok {
+			p.removeTxLocked(txMeta)
+		}
+	}
+
+	affectedTransactions := make([]*frameTxMeta, 0)
+
+	// Remove all transactions affected by touched state
+	for addr, txMeta := range p.index {
+		affected := false
+
+		if _, ok := reorgDiffs.TouchedAccounts[addr]; ok {
+			affected = true
+		} else {
+			// check touched storage as well
+			touchedSlots, ok := reorgDiffs.TouchedStorage[addr]
+			if !ok {
+				continue
+			}
+			for slot := range txMeta.storageReads {
+				if _, ok := touchedSlots[slot]; ok {
+					affected = true
+					break
+				}
+			}
+		}
+
+		if affected {
+			affectedTransactions = append(affectedTransactions, txMeta)
+			p.removeTxLocked(txMeta)
+		}
+	}
+
+	// Update all paymasters
+	for addr, paymaster := range p.paymasters {
+		_, accountTouched := reorgDiffs.TouchedAccounts[addr]
+		touchedSlots, _ := reorgDiffs.TouchedStorage[addr]
+
+		if accountTouched || len(touchedSlots) > 0 {
+			err := paymaster.onStateUpdate(newState, accountTouched, touchedSlots)
+			if err != nil {
+				log.Info("error updating paymaster during reorg", "err", err)
+				// remove all transactions that paymaster is sponsoring
+				for txHash := range paymaster.sponsoredTxs {
+					if txMeta, ok := p.lookup[txHash]; ok {
+						affectedTransactions = append(affectedTransactions, txMeta)
+						p.removeTxLocked(txMeta)
+					} else {
+						log.Error("tx from paymaster not found in lookup")
+					}
+				}
+				// verify that paymaster is no longer present
+				if _, ok := p.paymasters[addr]; ok {
+					panic("paymaster still present")
+				}
+				// transactions and paymaster will be added when affectedTransactions are re-added
+			}
+		}
+	}
+
+	// TODO(EIP-8141): consider starting background task to add txs and return early here
+
+	// Add all reverted transactions
+	for _, tx := range reorgDiffs.RevertedTransactions {
+		if p.ValidateTxBasics(tx) != nil {
+			continue
+		}
+		txMeta, err := newTxMeta(tx)
+		if err != nil {
+			log.Warn("can't create txMeta for reverted transaction", "txHash", tx.Hash())
+			continue
+		}
+		p.addTxLocked(txMeta, true /* =fromReorg */)
+	}
+
+	// Re-add all affected transactions
+	for _, txMeta := range affectedTransactions {
+		if p.ValidateTxBasics(txMeta.tx) != nil {
+			continue
+		}
+		p.addTxLocked(txMeta, true /* =fromReorg */)
+	}
 }
 
 // SetGasTip updates the minimum price required by the subpool for a new
@@ -273,13 +371,8 @@ func (p *FramePool) Add(txs []*types.Transaction, sync bool) []error {
 			continue
 		}
 
-		if txMeta.validationGasLimit() > maxVerifyGas {
-			errs[i] = txpool.ErrFrameTxValidationGasLimit
-			continue
-		}
-
 		p.lock.Lock()
-		if err := p.addTxLocked(txMeta); err != nil {
+		if err := p.addTxLocked(txMeta, false /* =fromReorg */); err != nil {
 			errs[i] = err
 		}
 		p.lock.Unlock()
@@ -421,31 +514,35 @@ func (p *FramePool) Clear() {
 	p.paymasters = make(map[common.Address]*paymaster)
 }
 
-func (p *FramePool) loop() {
-	defer close(p.loopDoneCh)
-
-	for {
-		select {
-		case <-p.shutdownCh:
-			return
-		case newHead := <-p.newHeadCh:
-			// TODO: do reorg
-			log.Info("reorg", "newHead", newHead)
-		}
-
-	}
-}
-
 // Validates and adds tx to the pool. Updates frameTxMeta.storageReads if successful.
 // Must hold the lock before calling this function.
-func (p *FramePool) addTxLocked(txMeta *frameTxMeta) error {
+func (p *FramePool) addTxLocked(txMeta *frameTxMeta, fromReorg bool) (err error) {
+	if txMeta.validationGasLimit() > maxVerifyGas {
+		return txpool.ErrFrameTxValidationGasLimit
+	}
+
 	header := p.head.Load()
 
-	if _, exists := p.index[txMeta.sender]; exists {
+	if _, ok := p.index[txMeta.sender]; ok {
 		// TODO(EIP-8141): add support for updating transactions
 		log.Warn("upgrading transaction is not yet supported")
 		return fmt.Errorf("transaction for sender %v already exists", txMeta.sender)
 	}
+
+	if err := p.reserver.Hold(txMeta.sender); err != nil {
+		return err
+	}
+	defer func() {
+		// If the transaction is rejected by some later check, remove the lock
+		// on the reservation set.
+		//
+		// Note, `err` here is the named error return, which will be initialized
+		// by a return statement before running deferred methods. Take care with
+		// removing or subscoping err as it will break this clause.
+		if err != nil {
+			p.reserver.Release(txMeta.sender)
+		}
+	}()
 
 	// Initialize state tracer
 	tracer := newValidationStateTracer(txMeta.sender)
@@ -497,12 +594,18 @@ func (p *FramePool) addTxLocked(txMeta *frameTxMeta) error {
 	p.index[txMeta.sender] = txMeta
 	p.lookup[txMeta.tx.Hash()] = txMeta
 
+	p.insertFeed.Send(core.NewTxsEvent{Txs: []*types.Transaction{txMeta.tx}})
+	if !fromReorg {
+		p.discoverFeed.Send(core.NewTxsEvent{Txs: []*types.Transaction{txMeta.tx}})
+	}
 	return nil
 }
 
 // Removes transaction from the pool.
 // Must hold the lock before calling this function.
 func (p *FramePool) removeTxLocked(txMeta *frameTxMeta) {
+	txMeta.storageReads = nil
+
 	delete(p.index, txMeta.sender)
 	delete(p.lookup, txMeta.tx.Hash())
 
@@ -514,4 +617,21 @@ func (p *FramePool) removeTxLocked(txMeta *frameTxMeta) {
 			delete(p.paymasters, payer)
 		}
 	}
+	p.reserver.Release(txMeta.sender)
+}
+
+// Removes all transaction from the pool.
+// Must hold the lock before calling this function.
+func (p *FramePool) removeAllLocked() []*frameTxMeta {
+	txs := slices.Collect(maps.Values(p.index))
+
+	for _, txMeta := range p.index {
+		p.reserver.Release(txMeta.sender)
+	}
+
+	clear(p.index)
+	clear(p.lookup)
+	clear(p.paymasters)
+
+	return txs
 }

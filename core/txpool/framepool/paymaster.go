@@ -18,8 +18,8 @@
 package framepool
 
 import (
+	"fmt"
 	"math"
-	"slices"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -29,21 +29,22 @@ import (
 )
 
 var (
+	// TODO(EIP-8141): use correct codehash
 	canonicalPaymasterCodehash = common.HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 
 	// pendingWithdrawalAmount field of canonical paymaster, slot 2
-	canonicalPaymasterPendingWithdrawalAmount = common.HexToHash("0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace")
+	canonicalPaymasterPendingWithdrawalAmountSlotHash = common.HexToHash("0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace")
 )
 
 type paymaster struct {
 	addr      common.Address
 	canonical bool
 
-	balance           *uint256.Int
-	reserved          *uint256.Int
-	pendingWithdrawal *uint256.Int
-	selfSponsored     *common.Hash
-	sponsored         []common.Hash
+	balance           *uint256.Int // The available ETH
+	pendingWithdrawal *uint256.Int // The amount of ETH that canonical paymaster is pending to withdraw
+
+	sponsoredTxs map[common.Hash]struct{} // The transactions that paymaster is sponsoring (including self-sponsored)
+	reserved     *uint256.Int             // The ETH that is reserved for sponsered transaction
 
 	lock sync.RWMutex
 }
@@ -54,7 +55,7 @@ func newPaymaster(addr common.Address, state *state.StateDB) *paymaster {
 
 	pendingWithdrawalAmount := new(uint256.Int)
 	if canonical {
-		pendingWithdrawalAmount.SetBytes(state.GetState(addr, canonicalPaymasterPendingWithdrawalAmount).Bytes())
+		pendingWithdrawalAmount.SetBytes(state.GetState(addr, canonicalPaymasterPendingWithdrawalAmountSlotHash).Bytes())
 	}
 
 	return &paymaster{
@@ -62,10 +63,10 @@ func newPaymaster(addr common.Address, state *state.StateDB) *paymaster {
 		canonical: canonical,
 
 		balance:           balance,
-		reserved:          new(uint256.Int),
 		pendingWithdrawal: pendingWithdrawalAmount,
-		selfSponsored:     nil,
-		sponsored:         make([]common.Hash, 0),
+
+		sponsoredTxs: make(map[common.Hash]struct{}),
+		reserved:     new(uint256.Int),
 	}
 }
 
@@ -83,40 +84,68 @@ func (p *paymaster) isEmpty() bool {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 
-	return p.selfSponsored == nil && len(p.sponsored) == 0
+	return len(p.sponsoredTxs) == 0
+}
+
+func (p *paymaster) onStateUpdate(
+	state *state.StateDB,
+	accountTouched bool,
+	touchedSlots map[common.Hash]struct{},
+) error {
+	if accountTouched {
+		// check whether paymaster started/stopped being canonical
+		canonical := state.GetCodeHash(p.addr) == canonicalPaymasterCodehash
+		if p.canonical != canonical {
+			return fmt.Errorf("paymaster canonical status changed, old: %v new %v", p.canonical, canonical)
+		}
+
+		// update balance
+		p.balance = state.GetBalance(p.addr)
+	}
+
+	if p.canonical {
+		// check if pendingWithdrawalAmount was updated
+		if _, ok := touchedSlots[canonicalPaymasterPendingWithdrawalAmountSlotHash]; ok {
+			pendingWithdrawal := state.GetState(p.addr, canonicalPaymasterPendingWithdrawalAmountSlotHash)
+			p.pendingWithdrawal.SetBytes(pendingWithdrawal.Bytes())
+		}
+	}
+	return nil
 }
 
 func (p *paymaster) addTx(txMeta *frameTxMeta) bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
+	txHash := txMeta.tx.Hash()
+
 	// sanity check
 	if p.addr != txMeta.payer() {
-		log.Error("adding tx to paymaster thay they don't pay for")
+		log.Error("adding tx to paymaster that they don't pay for")
+		return false
+	}
+	if _, ok := p.sponsoredTxs[txHash]; ok {
+		log.Error("adding tx to paymaster that already has it")
 		return false
 	}
 
-	if p.addr == txMeta.sender && p.selfSponsored != nil {
-		log.Error("adding self-sponsored tx to paymaster, when it already has one")
+	if len(p.sponsoredTxs) >= int(p.maxPendingTxs()) {
+		log.Warn("paymaster can't sponsor any more transactions")
 		return false
 	}
 
-	txHash := txMeta.tx.Hash()
 	txCost := uint256.MustFromBig(txMeta.tx.Cost())
 
-	available := p.balance.Clone()
-	available.Sub(available, p.reserved)
-	available.Sub(available, p.pendingWithdrawal)
-	if available.Lt(txCost) {
+	totalNewReserved := p.reserved.Clone()
+	totalNewReserved.Add(totalNewReserved, p.pendingWithdrawal)
+	totalNewReserved.Add(totalNewReserved, txCost)
+
+	if p.balance.Lt(totalNewReserved) {
 		return false
 	}
 
 	p.reserved.Add(p.reserved, txCost)
-	if p.addr == txMeta.sender {
-		p.selfSponsored = &txHash
-	} else {
-		p.sponsored = append(p.sponsored, txHash)
-	}
+	p.sponsoredTxs[txHash] = struct{}{}
 	return true
 }
 
@@ -125,21 +154,15 @@ func (p *paymaster) removeTx(txMeta *frameTxMeta) bool {
 	defer p.lock.Unlock()
 
 	txHash := txMeta.tx.Hash()
-	txCost := uint256.MustFromBig(txMeta.tx.Cost())
 
-	if p.selfSponsored != nil && *p.selfSponsored == txHash {
-		p.selfSponsored = nil
-		p.reserved.Sub(p.reserved, txCost)
-		return true
-	}
-
-	i := slices.Index(p.sponsored, txHash)
-	if i == -1 {
+	_, ok := p.sponsoredTxs[txHash]
+	if !ok {
 		log.Error("paymaster doesn't have tx")
 		return false
 	}
 
-	p.sponsored = slices.Delete(p.sponsored, i, i+1)
-	p.reserved.Sub(p.reserved, txCost)
+	delete(p.sponsoredTxs, txHash)
+	p.reserved.Sub(p.reserved, uint256.MustFromBig(txMeta.tx.Cost()))
+
 	return true
 }
