@@ -687,7 +687,7 @@ func enableFrameTxValidation(jt *JumpTable) {
 			return nil, ErrFrameValidation
 		}
 		// Check that current frame has DEFAULT mode
-		if fc.Frames[0].Mode() != types.FrameTxModeDefault {
+		if fc.Frames[0].Mode&types.FrameTxModeMask != types.FrameTxModeDefault {
 			return nil, ErrFrameValidation
 		}
 

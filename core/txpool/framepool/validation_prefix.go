@@ -74,7 +74,7 @@ func getValidationPrefix(sender *common.Address, frames []types.FrameTxFrame) (v
 	verifyFrameIndex := 0
 
 	// Check if first framet is "deploy" frame
-	if frames[0].Mode() == types.FrameTxModeDefault {
+	if frames[0].Mode&types.FrameTxModeMask == types.FrameTxModeDefault {
 		hasDeployFrame = true
 		verifyFrameIndex = 1
 	}
@@ -84,26 +84,22 @@ func getValidationPrefix(sender *common.Address, frames []types.FrameTxFrame) (v
 	}
 
 	// Check that next frame is VERIFY and target is sender
-	verifyFrame := &frames[verifyFrameIndex]
-	if verifyFrame.Mode() != types.FrameTxModeVerify {
-		return validationPrefixSelf, false
-	}
-	if verifyFrame.Target != nil && *verifyFrame.Target != *sender {
+	verifyExecutionFrame := &frames[verifyFrameIndex]
+	isModeVerify := verifyExecutionFrame.Mode&types.FrameTxModeMask == types.FrameTxModeVerify
+	isTargetSelf := verifyExecutionFrame.Target == nil || *verifyExecutionFrame.Target == *sender
+	isScopeExecution := verifyExecutionFrame.Mode&types.FrameTxAllowExecution == types.FrameTxAllowExecution
+	if !isModeVerify || !isTargetSelf || !isScopeExecution {
 		return validationPrefixSelf, false
 	}
 
-	// Check if it is "self-verify"
-	if verifyFrame.Scope() == types.FrameTxScopeBoth {
+	// Check if it is "self-verify" (execution and pay scope in the same frame)
+	isScopePayer := verifyExecutionFrame.Mode&types.FrameTxAllowPayment == types.FrameTxAllowPayment
+	if isScopePayer {
 		if hasDeployFrame {
 			return validationPrefixDeploySelf, true
 		} else {
 			return validationPrefixSelf, true
 		}
-	}
-
-	// Check that it approves sender
-	if verifyFrame.Scope() != types.FrameTxScopeSender {
-		return validationPrefixSelf, false
 	}
 
 	// Check that it has one more frame
@@ -113,7 +109,9 @@ func getValidationPrefix(sender *common.Address, frames []types.FrameTxFrame) (v
 
 	// Check that next frame is payer
 	payerFrame := &frames[verifyFrameIndex+1]
-	if payerFrame.Mode() == types.FrameTxModeVerify && payerFrame.Scope() == types.FrameTxScopePayer {
+	isModeVerify = payerFrame.Mode&types.FrameTxModeMask == types.FrameTxModeVerify
+	isScopePayer = payerFrame.Mode&types.FrameTxAllowPayment == types.FrameTxAllowPayment
+	if isModeVerify && isScopePayer {
 		if hasDeployFrame {
 			return validationPrefixDeployVerifyPay, true
 		} else {

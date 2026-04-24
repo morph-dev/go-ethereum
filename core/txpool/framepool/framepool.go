@@ -565,7 +565,7 @@ func (p *FramePool) addTxLocked(txMeta *frameTxMeta, fromReorg bool) (err error)
 		return err
 	}
 
-	gasPool := new(core.GasPool).AddGas(msg.GasLimit)
+	gasPool := core.NewGasPool(msg.GasLimit)
 
 	res, err := core.ApplyMessage(evm, msg, gasPool)
 	if err != nil {
