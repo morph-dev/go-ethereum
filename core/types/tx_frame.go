@@ -18,6 +18,7 @@ package types
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/holiman/uint256"
@@ -265,6 +267,41 @@ func (tx *FrameTx) sigHash(chainID *big.Int) common.Hash {
 	)
 }
 
+// Sign transactions sig_hash, and sets it as frame's data.
+//
+// First byte is 0 (indicating secp256k1), followed by V (1 byte), R (32 bytes) and S (32 bytes).
+func (tx *FrameTx) SignFrame(frameIdx uint, key *ecdsa.PrivateKey, signer Signer) (*FrameTx, error) {
+	newTx := tx.copy().(*FrameTx)
+
+	if frameIdx >= uint(len(newTx.Frames)) {
+		return nil, fmt.Errorf("can't sign frame tx, frame index %d out of bound", frameIdx)
+	}
+	frame := &newTx.Frames[frameIdx]
+	if len(frame.Data) > 0 {
+		return nil, fmt.Errorf("can't sign frame tx, frame %d already has data", frameIdx)
+	}
+
+	message := newTx.sigHash(tx.chainID())
+
+	sig, err := crypto.Sign(message.Bytes(), key)
+	if err != nil {
+		return nil, err
+	}
+	r := sig[:32]
+	s := sig[32:64]
+	v := sig[64]
+
+	frame.Data = make([]byte, 66)
+	frame.Data[0] = 0
+	frame.Data[1] = v
+	copy(frame.Data[2:], r)
+	copy(frame.Data[34:], s)
+
+	return newTx, nil
+}
+
+var coreIntrinsicGasOverflowError = errors.New("gas uint64 overflow")
+
 // CalcFrameTxGas calculates frame tx gas components as specified by EIP-8141.
 //
 // The returned values are:
@@ -301,5 +338,3 @@ func CalcFrameTxGas(frames []FrameTxFrame) (uint64, uint64, uint64, error) {
 	}
 	return intrinsic, frameGas, intrinsic + frameGas, nil
 }
-
-var coreIntrinsicGasOverflowError = errors.New("gas uint64 overflow")
