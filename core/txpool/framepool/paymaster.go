@@ -71,9 +71,6 @@ func newPaymaster(addr common.Address, state *state.StateDB) *paymaster {
 }
 
 func (p *paymaster) maxPendingTxs() uint {
-	p.lock.RLock()
-	defer p.lock.RUnlock()
-
 	if p.canonical {
 		return math.MaxUint
 	}

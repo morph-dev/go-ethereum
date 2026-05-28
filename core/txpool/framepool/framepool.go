@@ -377,7 +377,7 @@ func (p *FramePool) Add(txs []*types.Transaction, sync bool) []error {
 		}
 		p.lock.Unlock()
 	}
-	return nil
+	return errs
 }
 
 // Pending retrieves all currently processable transactions, grouped by origin
