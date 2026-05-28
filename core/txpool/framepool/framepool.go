@@ -347,9 +347,10 @@ func (p *FramePool) ValidateTxBasics(tx *types.Transaction) error {
 	return nil
 }
 
-// Add enqueues a batch of transactions into the pool if they are valid. Due
-// to the large transaction churn, add may postpone fully integrating the tx
-// to a later point to batch multiple ones together.
+// Add enqueues a batch of transactions into the pool if they are valid.
+//
+// The 'sync' params is currently not used, which means that call will
+// block until all transactions are processed.
 func (p *FramePool) Add(txs []*types.Transaction, sync bool) []error {
 	errs := make([]error, len(txs))
 

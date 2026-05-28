@@ -2667,6 +2667,8 @@ func benchmarkFuturePromotion(b *testing.B, size int) {
 	}
 }
 
+func BenchmarkBatchInsert10(b *testing.B) { benchmarkBatchInsert(b, 10) }
+
 // Benchmarks the speed of batched transaction insertion.
 func BenchmarkBatchInsert100(b *testing.B)   { benchmarkBatchInsert(b, 100) }
 func BenchmarkBatchInsert1000(b *testing.B)  { benchmarkBatchInsert(b, 1000) }
